@@ -1,0 +1,55 @@
+# Generate the Xcode project: `cd ios && xcodegen generate` (StarIndex.xcodeproj is not committed).
+name: StarIndex
+options:
+  bundleIdPrefix: com.ryujemu
+  deploymentTarget:
+    iOS: "26.0"
+  createIntermediateGroups: true
+  developmentLanguage: ko
+packages:
+  SkyCore:
+    path: Packages/SkyCore
+  SkySensors:
+    path: Packages/SkySensors
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    # Set after signing in to Xcode with the Apple Developer account (G0).
+    DEVELOPMENT_TEAM: ""
+    CODE_SIGN_STYLE: Automatic
+targets:
+  StarIndex:
+    type: application
+    platform: iOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: App
+        excludes:
+          - "Info.plist"
+      - path: ../data/packs/skypack-v1.bin
+        buildPhase: resources
+    dependencies:
+      - package: SkyCore
+      - package: SkySensors
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleDisplayName: "별 지수"
+        CFBundleDevelopmentRegion: ko
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        NSLocationWhenInUseUsageDescription: "내 위치에서 보이는 하늘을 그리고 그 지역의 오늘 밤 별 지수를 보여 주기 위해 대략적인 위치를 사용합니다. 위치는 기기 밖으로 전송되지 않습니다."
+        NSLocationDefaultAccuracyReduced: true
+        NSMotionUsageDescription: "폰을 드는 방향에 맞춰 하늘을 보여 주기 위해 기기의 방향 센서를 사용합니다."
+        ITSAppUsesNonExemptEncryption: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.ryujemu.starindex
+        TARGETED_DEVICE_FAMILY: "1"
+        INFOPLIST_KEY_UIStatusBarHidden: YES
+        ENABLE_USER_SCRIPT_SANDBOXING: YES
+        SWIFT_STRICT_CONCURRENCY: complete
