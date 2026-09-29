@@ -55,13 +55,67 @@ struct TransformTests {
         #expect(abs(e.refraction(altitudeDeg: -0.999) - e.refraction(altitudeDeg: -1.001)) < 1e-3)
     }
 
-    @Test("T4: inverse refraction round-trip ≤ 0.01′")
+    @Test("T4: inverse refraction round-trip ≤ 0.01′ over the whole sky (dense sweep)",
+          .timeLimit(.minutes(1)))
     func inverseRoundTrip() {
         let e = AstroEngine.shared
-        for alt in stride(from: -5.0, through: 89.0, by: 0.37) {
+        var worst = 0.0
+        for i in 0...18_000 {
+            let alt = -90.0 + Double(i) * 0.01
             let bent = alt + e.refraction(altitudeDeg: alt)
             let back = bent + e.inverseRefraction(bentAltitudeDeg: bent)
-            #expect(abs(back - alt) * 60 <= 0.01, "alt \(alt)")
+            worst = max(worst, abs(back - alt) * 60)
+        }
+        #expect(worst <= 0.01, "worst \(worst)′")
+    }
+
+    @Test("Inverse refraction terminates at the zenith, the ±1-ulp band and NaN (AE loop has no cap)",
+          .timeLimit(.minutes(1)))
+    func inverseRefractionEdgeCases() {
+        let e = AstroEngine.shared
+        #expect(e.inverseRefraction(bentAltitudeDeg: 90.0) == 0)
+        #expect(e.inverseRefraction(bentAltitudeDeg: 89.99997) == 0)
+        #expect(abs(e.inverseRefraction(bentAltitudeDeg: 89.9)) < 1e-5)
+        #expect(e.inverseRefraction(bentAltitudeDeg: .nan) == 0)
+        #expect(e.inverseRefraction(bentAltitudeDeg: 95) == 0)
+        for b in [-67.96672283963196, -89.85615852749538, -90.0] {
+            let d = e.inverseRefraction(bentAltitudeDeg: b)
+            #expect(d.isFinite)
+            #expect(abs((b + d) + e.refraction(altitudeDeg: b + d) - b) < 1e-9, "b \(b)")
+        }
+        // Vectors: zenith stays the zenith; zero / NaN vectors are passed through, never turned into +90°.
+        #expect(simd_distance(Refraction.unrefract(U), U) < 1e-12)
+        #expect(simd_distance(Refraction.refract(U), U) < 1e-9)
+        #expect(Refraction.unrefract(SIMD3<Double>(0, 0, 0)) == SIMD3<Double>(0, 0, 0))
+        #expect(Horizontal.altAz(SIMD3<Double>(.nan, 0, 1)).altitudeDeg.isNaN)
+        #expect(ConstellationLocator.locate(j2000: SIMD3<Double>(0, 0, 0)) == nil)
+    }
+
+    @Test("Time anchor: J2000 epoch is ut = 0 and Date ↔ astro_time_t round-trips")
+    func timeAnchor() {
+        #expect(AstroEngine.astroTime(utc("2000-01-01T12:00:00Z")).ut == 0)
+        for d in sampleDates {
+            #expect(abs(AstroEngine.date(AstroEngine.astroTime(d)).timeIntervalSince(d)) < 1e-3)
+        }
+    }
+
+    /// External reference (independent of Astronomy Engine): JPL Horizons API, observer Seoul
+    /// (126.9780E, 37.5665N, 0.038 km), APPARENT='AIRLESS', queried 2026-09-29.
+    @Test("T6: geometric alt/az matches JPL Horizons (Sun/Jupiter ≤ 1′, Moon ≤ 2′)")
+    func horizonsReference() throws {
+        let engine = AstroEngine.shared
+        let cases: [(SkyBody, String, Double, Double, Double)] = [
+            (.sun, "2026-09-29T10:00:00Z", 273.767403677, -8.964608760, 1),
+            (.moon, "2026-09-29T10:00:00Z", 60.828115419, -5.186596336, 2),
+            (.sun, "2026-12-21T03:00:00Z", 172.168969086, 28.590124496, 1),
+            (.jupiter, "2026-12-21T15:00:00Z", 92.929788008, 26.053041712, 1),
+        ]
+        for (body, iso, az, el, tolArcmin) in cases {
+            let date = utc(iso)
+            let v = try #require(engine.equatorJ2000Vector(body, date: date, observer: .seoul))
+            let ours = HorizonTransform.make(date: date, observer: .seoul) * v
+            let ref = Horizontal.vector(altitudeDeg: el, azimuthDeg: az)
+            #expect(angleDeg(ours, ref) * 60 <= tolArcmin, "\(body) \(iso): \(angleDeg(ours, ref) * 60)′")
         }
     }
 

@@ -1,24 +1,26 @@
 import Foundation
 import simd
 
-/// Sun/Moon event searches built on Astronomy Engine.
+/// Sun/Moon event searches built on Astronomy Engine. Searches look 2 days ahead: the next
+/// sunset can be more than 24 h away (days lengthen), so a 1-day window briefly fails right
+/// after sunset and would be mistaken for polar day/night.
 public enum RiseSetService {
     /// Next sunset (upper limb, standard refraction).
     public static func sunset(after date: Date, observer: ObserverLocation,
                               engine: AstroEngine = .shared) -> Date? {
-        engine.searchRiseSet(.sun, observer: observer, direction: .set, after: date, limitDays: 1.0)
+        engine.searchRiseSet(.sun, observer: observer, direction: .set, after: date, limitDays: 2.0)
     }
 
     public static func sunrise(after date: Date, observer: ObserverLocation,
                                engine: AstroEngine = .shared) -> Date? {
-        engine.searchRiseSet(.sun, observer: observer, direction: .rise, after: date, limitDays: 1.0)
+        engine.searchRiseSet(.sun, observer: observer, direction: .rise, after: date, limitDays: 2.0)
     }
 
     /// Evening time the Sun's center descends through a geometric altitude (e.g. −6, −12, −18).
     public static func duskCrossing(altitudeDeg: Double, after date: Date, observer: ObserverLocation,
                                     engine: AstroEngine = .shared) -> Date? {
         engine.searchAltitude(.sun, observer: observer, direction: .set, after: date,
-                              limitDays: 1.0, altitudeDeg: altitudeDeg)
+                              limitDays: 2.0, altitudeDeg: altitudeDeg)
     }
 
     /// Lower culmination of the Sun (hour angle 12h) — the minimum altitude of the night.

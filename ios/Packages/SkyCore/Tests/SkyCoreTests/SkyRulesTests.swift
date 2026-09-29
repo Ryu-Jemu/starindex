@@ -6,9 +6,16 @@ import simd
 @Suite("T11 기상청 격자")
 struct KMAGridTests {
     @Test("Seoul City Hall → (60, 127)")
-    func seoul() {
-        let g = KMAGrid.toGrid(latitude: 37.5665, longitude: 126.9780)
+    func seoul() throws {
+        let g = try #require(KMAGrid.toGrid(latitude: 37.5665, longitude: 126.9780))
         #expect(g.nx == 60 && g.ny == 127)
+    }
+
+    @Test("Invalid or out-of-grid input → nil (no trap on NaN)")
+    func invalid() {
+        #expect(KMAGrid.toGrid(latitude: .nan, longitude: 127) == nil)
+        #expect(KMAGrid.toGrid(latitude: 90, longitude: 127) == nil)
+        #expect(KMAGrid.toGrid(latitude: 37.32, longitude: -122.03) == nil)   // Cupertino
     }
 }
 
@@ -60,7 +67,8 @@ struct LimitingMagnitudeTests {
 
     @Test("Knots and midpoints (k = 0, Moon below horizon)")
     func knots() {
-        let dark: [(Double, Double)] = [(10, -5), (-6, 0), (-12, 3), (-18, 6.5), (-9, 1.5), (-15, 5.0), (-30, 6.5)]
+        let dark: [(Double, Double)] = [(10, -5), (-2.9, -5), (-3, -5), (-4.5, -2.5), (-6, 0), (-12, 3), (-18, 6.5),
+                                        (-9, 1.5), (-15, 5.0), (-30, 6.5)]
         for (h, m) in dark { #expect(abs(mLim(h, base: 6.5) - m) < 1e-12, "dark h \(h)") }
         let city: [(Double, Double)] = [(10, -5), (-6, 0), (-12, 3), (-18, 4.0), (-15, 4.0)]
         for (h, m) in city { #expect(abs(mLim(h, base: 4.0) - m) < 1e-12, "city h \(h)") }
@@ -77,6 +85,14 @@ struct LimitingMagnitudeTests {
         #expect(LimitingMagnitude.starAlpha(magnitude: -1.46, limit: mLim(-2.9, base: 6.5)) == 0)
         #expect(LimitingMagnitude.starAlpha(magnitude: 0.03, limit: mLim(-6, base: 6.5)) == 0)
         #expect(LimitingMagnitude.starAlpha(magnitude: -1.46, limit: mLim(-6, base: 6.5)) > 0)
+    }
+
+    @Test("Planets: Venus (−4.4) appears between −3° and −3.5°; planet limit floor −5")
+    func planets() {
+        let venus = -4.4
+        #expect(LimitingMagnitude.starAlpha(magnitude: venus, limit: LimitingMagnitude.planetLimit(mLim(-3.0, base: 6.5))) == 0)
+        #expect(LimitingMagnitude.starAlpha(magnitude: venus, limit: LimitingMagnitude.planetLimit(mLim(-3.5, base: 6.5))) > 0)
+        #expect(LimitingMagnitude.planetLimit(-6) == -5)
     }
 
     @Test("Moonlight lowers the night limit but never below 3.0")

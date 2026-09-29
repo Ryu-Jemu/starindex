@@ -17,6 +17,14 @@ public enum SkyColorModel {
     ///   - cloud: 0 (clear) … 1 (overcast / precipitation).
     public static func eval(direction d: SIMD3<Double>, sun: SIMD3<Double>, palette p: SkyPaletteSample,
                             night: SIMD3<Double>, ground: SIMD3<Double>, cloud: Double) -> SIMD3<Double> {
+        let c = linear(direction: d, sun: sun, palette: p, night: night, ground: ground, cloud: cloud)
+        return ColorMath.linearToSrgb(simd_clamp(c, SIMD3(repeating: 0), SIMD3(repeating: 1)))
+    }
+
+    /// Unclamped LINEAR color before the final saturate + OETF (exposed so tests can see NaNs
+    /// that the clamp would otherwise hide).
+    static func linear(direction d: SIMD3<Double>, sun: SIMD3<Double>, palette p: SkyPaletteSample,
+                       night: SIMD3<Double>, ground: SIMD3<Double>, cloud: Double) -> SIMD3<Double> {
         let mu = d.z
         let t = pow(1 - saturate(mu), horizonExponent)
         let xy = SIMD2(d.x, d.y)
@@ -29,9 +37,7 @@ public enum SkyColorModel {
         var c = base + glow * p.horizonSun + p.nightGlow * night
         let luma = ColorMath.luminance(c) * (1 - 0.25 * cloud)
         c = simd_mix(c, SIMD3(repeating: luma), SIMD3(repeating: 0.7 * cloud))
-        c = simd_mix(ground, c, SIMD3(repeating: smoothstep(-0.10, 0.0, mu)))
-        let clamped = simd_clamp(c, SIMD3(repeating: 0), SIMD3(repeating: 1))
-        return ColorMath.linearToSrgb(clamped)
+        return simd_mix(ground, c, SIMD3(repeating: smoothstep(-0.10, 0.0, mu)))
     }
 
     static func saturate(_ x: Double) -> Double { min(1, max(0, x)) }

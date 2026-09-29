@@ -8,8 +8,11 @@ public enum Horizontal {
     static let degPerRad = 180.0 / Double.pi
 
     /// Altitude (−90…90) and azimuth (0…360, north = 0, east = 90) in degrees.
+    /// Non-finite or zero-length input yields (NaN, NaN) — it must never be mistaken for the zenith.
     public static func altAz(_ v: SIMD3<Double>) -> (altitudeDeg: Double, azimuthDeg: Double) {
-        let n = simd_normalize(v)
+        let len = simd_length(v)
+        guard len.isFinite, len > 0 else { return (.nan, .nan) }
+        let n = v / len
         let alt = asin(max(-1, min(1, n.z))) * degPerRad
         var az = atan2(-n.y, n.x) * degPerRad
         if az < 0 { az += 360 }
@@ -54,12 +57,16 @@ public enum Refraction {
     /// the correction continuously below −1°). Azimuth is preserved.
     public static func refract(_ h: SIMD3<Double>, engine: AstroEngine = .shared) -> SIMD3<Double> {
         let (alt, az) = Horizontal.altAz(h)
-        return Horizontal.vector(altitudeDeg: alt + engine.refraction(altitudeDeg: alt), azimuthDeg: az)
+        guard alt.isFinite else { return h }
+        let bent = min(90, max(-90, alt + engine.refraction(altitudeDeg: alt)))
+        return Horizontal.vector(altitudeDeg: bent, azimuthDeg: az)
     }
 
     /// Removes standard refraction from an apparent horizontal vector.
     public static func unrefract(_ h: SIMD3<Double>, engine: AstroEngine = .shared) -> SIMD3<Double> {
         let (alt, az) = Horizontal.altAz(h)
-        return Horizontal.vector(altitudeDeg: alt + engine.inverseRefraction(bentAltitudeDeg: alt), azimuthDeg: az)
+        guard alt.isFinite else { return h }
+        let geometric = min(90, max(-90, alt + engine.inverseRefraction(bentAltitudeDeg: alt)))
+        return Horizontal.vector(altitudeDeg: geometric, azimuthDeg: az)
     }
 }

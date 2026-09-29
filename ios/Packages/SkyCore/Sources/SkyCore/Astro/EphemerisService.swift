@@ -26,7 +26,9 @@ public enum EphemerisService {
 public enum ConstellationLocator {
     /// IAU abbreviation for a J2000 direction.
     public static func locate(j2000 v: SIMD3<Double>, engine: AstroEngine = .shared) -> String? {
-        let n = simd_normalize(v)
+        let len = simd_length(v)
+        guard len.isFinite, len > 0 else { return nil }
+        let n = v / len
         var ra = atan2(n.y, n.x) * 12 / Double.pi
         if ra < 0 { ra += 24 }
         let dec = asin(max(-1, min(1, n.z))) * 180 / Double.pi

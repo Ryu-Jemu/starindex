@@ -58,13 +58,31 @@ public final class AstroEngine: Sendable {
     }
 
     /// Standard refraction (degrees to add) at a geometric altitude, continuous for all altitudes.
+    /// Above 89.9° AE's Saemundsson formula turns slightly negative (non-physical, ≥ −3.2e-5°);
+    /// it is treated as 0 there so refract/unrefract stay exact inverses at the zenith.
     public func refraction(altitudeDeg: Double) -> Double {
-        Astronomy_Refraction(REFRACTION_NORMAL, altitudeDeg)
+        guard altitudeDeg.isFinite else { return 0 }
+        if altitudeDeg > 89.9 { return 0 }
+        return Astronomy_Refraction(REFRACTION_NORMAL, altitudeDeg)
     }
 
     /// Inverse of `refraction`: degrees to add to an apparent (bent) altitude to get the geometric one.
-    public func inverseRefraction(bentAltitudeDeg: Double) -> Double {
-        Astronomy_InverseRefraction(REFRACTION_NORMAL, bentAltitudeDeg)
+    ///
+    /// Implemented here with a bounded fixed-point iteration instead of calling
+    /// `Astronomy_InverseRefraction`, whose `for(;;)` loop has no iteration cap and never
+    /// terminates for bent altitudes above ≈ 89.99997° (no solution: R(90) < 0), for ~0.7 % of
+    /// inputs in [−90°, −64°] (±1 ulp 2-cycle, since d(a+R)/da > 1 there and ulp > 1e-14) and
+    /// for NaN. The map a ← b − R(a) is a contraction (|R′| ≤ 0.2), so it converges quickly.
+    public func inverseRefraction(bentAltitudeDeg b: Double) -> Double {
+        guard b.isFinite, b >= -90, b <= 90 else { return 0 }
+        if b > 89.9 { return 0 }                  // |refraction| < 3e-5° up here
+        var a = b - refraction(altitudeDeg: b)
+        for _ in 0..<50 {
+            let diff = (a + refraction(altitudeDeg: a)) - b
+            if abs(diff) <= 1e-12 { break }
+            a -= diff
+        }
+        return a - b
     }
 
     // MARK: - Positions

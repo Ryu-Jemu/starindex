@@ -45,30 +45,51 @@ struct SkyColorTests {
         }
     }
 
-    @Test("T15b: moon + light pollution never make h ≤ −6° brighter than the −6° zenith")
+    @Test("T15b: moon + light pollution never make h ≤ −6° brighter than the −6° zenith (via SkyColorModel)")
     func nightCap() {
         let night = SkyPalette.nightColor(moonIllumination: 1, moonAltitudeDeg: 90, lightPollution: 1)
         let cap = ColorMath.luminance(SkyPalette.eval(sunGeometricAltitudeDeg: -6).zenith)
         for h in stride(from: -6.0, through: -30.0, by: -0.5) {
             let p = SkyPalette.eval(sunGeometricAltitudeDeg: h)
-            let zenith = p.zenith + p.nightGlow * night
-            #expect(ColorMath.luminance(zenith) <= cap + 1e-12, "h \(h)")
+            let sun = Horizontal.vector(altitudeDeg: h, azimuthDeg: 280)
+            for cloud in [0.0, 1.0] {
+                let enc = SkyColorModel.eval(direction: U, sun: sun, palette: p, night: night,
+                                             ground: SkyPalette.groundColor(p), cloud: cloud)
+                #expect(ColorMath.luminance(ColorMath.srgbToLinear(enc)) <= cap + 1e-9, "h \(h) cloud \(cloud)")
+            }
         }
     }
 
-    @Test("T17 (CPU): zenith pixel equals the keyframe hex within 1/255")
+    /// Independent integer literals (not derived from ColorMath.hex) for each keyframe zenith.
+    static let zenithLiterals: [(h: Double, rgb: SIMD3<Double>)] = [
+        (20, SIMD3(61, 124, 201)), (6, SIMD3(74, 120, 184)), (-0.83, SIMD3(58, 85, 132)),
+        (-4, SIMD3(38, 58, 102)), (-6, SIMD3(27, 42, 82)), (-12, SIMD3(11, 20, 48)), (-18, SIMD3(3, 6, 14)),
+    ]
+
+    @Test("T17 (CPU): zenith pixel equals the keyframe color literal within 1/255")
     func keyframeAbsoluteColor() {
-        for k in SkyPalette.keyframes {
-            let p = SkyPalette.eval(sunGeometricAltitudeDeg: k.h)
-            let sun = Horizontal.vector(altitudeDeg: k.h, azimuthDeg: 270)
+        #expect(ColorMath.hex("#3D7CC9") * 255 == SIMD3(61, 124, 201))
+        for (h, rgb) in Self.zenithLiterals {
+            let p = SkyPalette.eval(sunGeometricAltitudeDeg: h)
+            let sun = Horizontal.vector(altitudeDeg: h, azimuthDeg: 270)
             let out = SkyColorModel.eval(direction: U, sun: sun, palette: p, night: noNight,
-                                         ground: SkyPalette.groundColor(p), cloud: 0)
-            let expected = ColorMath.hex(k.zenith)
-            #expect(simd_reduce_max(simd_abs(out - expected)) <= 1.0 / 255, "\(k.h)")
+                                         ground: SkyPalette.groundColor(p), cloud: 0) * 255
+            #expect(simd_reduce_max(simd_abs(out - rgb)) <= 1.0, "h \(h): \(out)")
         }
     }
 
-    @Test("Shader math is finite at zenith, nadir and toward the Sun")
+    @Test("T17 (CPU): nadir shows the ground color")
+    func nadirGround() {
+        for h in [20.0, -0.83, -12] {
+            let p = SkyPalette.eval(sunGeometricAltitudeDeg: h)
+            let sun = Horizontal.vector(altitudeDeg: h, azimuthDeg: 270)
+            let ground = SkyPalette.groundColor(p)
+            let out = SkyColorModel.eval(direction: -U, sun: sun, palette: p, night: noNight, ground: ground, cloud: 0)
+            #expect(simd_reduce_max(simd_abs(out - ColorMath.linearToSrgb(ground))) <= 1.0 / 255)
+        }
+    }
+
+    @Test("Shader math is finite (unclamped linear) at zenith, nadir and toward the Sun")
     func finite() {
         for h in [-30.0, -12, -6, -0.83, 0, 6, 30, 89.9] {
             let p = SkyPalette.eval(sunGeometricAltitudeDeg: h)
@@ -76,10 +97,10 @@ struct SkyColorTests {
             let night = SkyPalette.nightColor(moonIllumination: 0.5, moonAltitudeDeg: 40, lightPollution: 0.3)
             for d in [U, -U, sun, Horizontal.vector(altitudeDeg: 0, azimuthDeg: 250)] {
                 for cloud in [0.0, 1.0] {
-                    let c = SkyColorModel.eval(direction: d, sun: sun, palette: p, night: night,
-                                               ground: SkyPalette.groundColor(p), cloud: cloud)
-                    #expect(c.x.isFinite && c.y.isFinite && c.z.isFinite)
-                    #expect(simd_reduce_min(c) >= 0 && simd_reduce_max(c) <= 1)
+                    let lin = SkyColorModel.linear(direction: d, sun: sun, palette: p, night: night,
+                                                   ground: SkyPalette.groundColor(p), cloud: cloud)
+                    #expect(lin.x.isFinite && lin.y.isFinite && lin.z.isFinite)
+                    #expect(simd_reduce_min(lin) >= 0)
                 }
             }
         }

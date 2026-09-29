@@ -16,6 +16,23 @@ public enum FrameKind: String, CaseIterable, Sendable, Codable {
     case manual
 }
 
+/// How a CoreMotion-style attitude (quaternion or rotation matrix) relates to
+/// A = reference → device. Apple's docs leave the direction ambiguous, so it is decided once at
+/// gate G2 on a real device and changed in exactly one place: `AttitudeConvention.current`.
+public enum AttitudeConvention: Sendable, Equatable {
+    /// The attitude rotation maps device-frame vectors into the reference frame; A = Rᵀ.
+    case deviceToReference
+    /// The attitude rotation maps reference-frame vectors into the device frame; A = R.
+    case referenceToDevice
+
+    /// PROVISIONAL until the first on-device G2 session.
+    public static let current: AttitudeConvention = .deviceToReference
+
+    func referenceToDevice(_ r: simd_double3x3) -> simd_double3x3 {
+        self == .deviceToReference ? r.transpose : r
+    }
+}
+
 /// Maps horizontal (HOR) vectors to device coordinates and back.
 ///
 /// Forward: `v_dev = A · Rz(ψ) · Rz(D) · h`
@@ -37,6 +54,20 @@ public struct FrameTransform: Sendable {
         self.referenceToDevice = referenceToDevice
         self.psiDeg = psiDeg
         self.declinationDeg = declinationDeg
+    }
+
+    /// From a sensor quaternion (e.g. CMAttitude.quaternion converted to simd_quatd).
+    public init(kind: FrameKind, attitude q: simd_quatd, convention: AttitudeConvention = .current,
+                psiDeg: Double = 0, declinationDeg: Double = 0) {
+        self.init(kind: kind, referenceToDevice: convention.referenceToDevice(simd_matrix3x3(q)),
+                  psiDeg: psiDeg, declinationDeg: declinationDeg)
+    }
+
+    /// From a sensor rotation matrix (e.g. CMAttitude.rotationMatrix).
+    public init(kind: FrameKind, attitudeMatrix m: simd_double3x3, convention: AttitudeConvention = .current,
+                psiDeg: Double = 0, declinationDeg: Double = 0) {
+        self.init(kind: kind, referenceToDevice: convention.referenceToDevice(m),
+                  psiDeg: psiDeg, declinationDeg: declinationDeg)
     }
 
     public var effectiveDeclinationDeg: Double { kind == .cmMagnetic ? declinationDeg : 0 }

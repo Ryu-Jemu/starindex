@@ -9,6 +9,10 @@ struct SunsetPlaybackTests {
         utc("\(day)T12:00:00Z").addingTimeInterval(-longitude / 15 * 3600)
     }
 
+    func plan(_ day: String, lat: Double, lon: Double) -> SunsetPlaybackPlan? {
+        SunsetPlaybackPlanner.plan(after: localNoon(day, longitude: lon), observer: ObserverLocation(latitude: lat, longitude: lon))
+    }
+
     @Test("Seoul: about 20 s, ends at astronomical dusk", arguments: ["2026-09-29", "2026-06-21", "2026-12-21"])
     func seoul(day: String) throws {
         let obs = ObserverLocation.seoul
@@ -20,21 +24,41 @@ struct SunsetPlaybackTests {
         #expect(!plan.showsNoAstronomicalDuskNotice)
     }
 
-    @Test("High latitudes in June stay ≤ 21 s without division by zero", arguments: [55.0, 60.0, 62.0])
-    func highLatitude(lat: Double) throws {
-        let obs = ObserverLocation(latitude: lat, longitude: 25.0)
-        let plan = try #require(SunsetPlaybackPlanner.plan(after: localNoon("2026-06-21", longitude: 25), observer: obs))
-        #expect(plan.totalRealSeconds <= 21, "lat \(lat): \(plan.totalRealSeconds)")
-        for s in plan.segments { #expect(s.speed.isFinite && s.speed >= 1) }
-        #expect(plan.showsNoAstronomicalDuskNotice)   // Sun never reaches −18° there in June
+    @Test("High latitudes in June: 18–21 s, expected end reason, no division by zero",
+          arguments: [(55.0, SunsetPlaybackPlan.EndReason.sunsetPlus3h, 2),
+                      (60.0, .lowerCulmination, 2),
+                      (62.0, .lowerCulmination, 1)])
+    func highLatitude(lat: Double, reason: SunsetPlaybackPlan.EndReason, segments: Int) throws {
+        let p = try #require(plan("2026-06-21", lat: lat, lon: 25))
+        #expect(p.totalRealSeconds >= 18 && p.totalRealSeconds <= 21, "lat \(lat): \(p.totalRealSeconds)")
+        #expect(p.endReason == reason, "lat \(lat): \(p.endReason)")
+        #expect(p.segments.count == segments)
+        for s in p.segments { #expect(s.speed.isFinite && s.speed >= 1) }
+        #expect(p.showsNoAstronomicalDuskNotice)          // the Sun never reaches −18° there in June
+        if segments == 1 { #expect(abs(p.totalRealSeconds - 20) < 1e-6) }
     }
 
     @Test("48°N in June: stopped by the 3 h cap, notice not shown")
     func capNotNotice() throws {
-        let obs = ObserverLocation(latitude: 48.0, longitude: 11.0)
-        let plan = try #require(SunsetPlaybackPlanner.plan(after: localNoon("2026-06-21", longitude: 11), observer: obs))
-        #expect(!plan.showsNoAstronomicalDuskNotice)
-        #expect(plan.totalRealSeconds <= 21)
+        let p = try #require(plan("2026-06-21", lat: 48.0, lon: 11.0))
+        #expect(p.endReason == .sunsetPlus3h)
+        #expect(abs(p.end.timeIntervalSince(p.sunset) - 3 * 3600) < 1e-3)
+        #expect(!p.showsNoAstronomicalDuskNotice)
+        #expect(p.totalRealSeconds >= 18 && p.totalRealSeconds <= 21)
+    }
+
+    @Test("Polar day (70°N, June): no sunset → nil")
+    func polarDay() {
+        #expect(plan("2026-06-21", lat: 70.0, lon: 25) == nil)
+    }
+
+    @Test("Right after sunset the next evening is still found (2-day search window)")
+    func rightAfterSunset() throws {
+        let obs = ObserverLocation.seoul
+        let sunset = try #require(RiseSetService.sunset(after: localNoon("2027-03-20", longitude: obs.longitude), observer: obs))
+        for minutes in [1.0, 5, 30] {
+            #expect(SunsetPlaybackPlanner.plan(after: sunset.addingTimeInterval(minutes * 60), observer: obs) != nil)
+        }
     }
 
     @Test("Twilight crossings are ordered: sunset < −6° < −12° < −18° (Seoul)")

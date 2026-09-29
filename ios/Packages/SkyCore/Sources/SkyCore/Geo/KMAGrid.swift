@@ -8,7 +8,12 @@ public enum KMAGrid {
     static let slat1 = 30.0, slat2 = 60.0, olon = 126.0, olat = 38.0
     static let xo = 43.0, yo = 136.0
 
-    public static func toGrid(latitude: Double, longitude: Double) -> (nx: Int, ny: Int) {
+    /// KMA grid extent (단기예보 격자: nx 1…149, ny 1…253).
+    public static let nxRange = 1...149, nyRange = 1...253
+
+    /// Returns nil for non-finite input, latitudes at the poles, or points outside the KMA grid.
+    public static func toGrid(latitude: Double, longitude: Double) -> (nx: Int, ny: Int)? {
+        guard latitude.isFinite, longitude.isFinite, latitude > -90, latitude < 90 else { return nil }
         let d = Double.pi / 180
         let reG = re / grid
         let s1 = slat1 * d, s2 = slat2 * d, oL = olon * d, oA = olat * d
@@ -26,6 +31,7 @@ public enum KMAGrid {
         theta *= sn
         let x = floor(ra * sin(theta) + xo + 0.5)
         let y = floor(ro - ra * cos(theta) + yo + 0.5)
+        guard x.isFinite, y.isFinite, nxRange.contains(Int(x)), nyRange.contains(Int(y)) else { return nil }
         return (Int(x), Int(y))
     }
 }

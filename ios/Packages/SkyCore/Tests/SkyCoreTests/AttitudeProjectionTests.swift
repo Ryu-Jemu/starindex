@@ -99,6 +99,37 @@ struct AttitudeProjectionTests {
         #expect(simd_distance(viaRows, ft.toHorizontal(v)) < 1e-12)
     }
 
+    /// Device axes for a portrait phone whose rear camera faces azimuth θ, rolled by r about −z.
+    func portrait(facing theta: Double, roll r: Double) -> simd_double3x3 {
+        let fwd = Horizontal.vector(altitudeDeg: 0, azimuthDeg: theta)
+        let right = Horizontal.vector(altitudeDeg: 0, azimuthDeg: theta + 90)
+        let rr = r * Double.pi / 180
+        let x = cos(rr) * right + sin(rr) * U
+        let y = -sin(rr) * right + cos(rr) * U
+        return simd_double3x3(columns: (x, y, -fwd))   // device → reference
+    }
+
+    @Test("Attitude adapters: the convention is observable on an asymmetric attitude",
+          arguments: [AttitudeConvention.deviceToReference, .referenceToDevice])
+    func conventionAdapters(convention: AttitudeConvention) throws {
+        let q = portrait(facing: 45, roll: 20)
+        // Guard against accidentally symmetric test attitudes (they cannot tell A from Aᵀ).
+        let asym = q - q.transpose
+        #expect(simd_length(asym.columns.0) + simd_length(asym.columns.1) + simd_length(asym.columns.2) > 0.1)
+        // What the sensor would report under this convention.
+        let reported = convention == .deviceToReference ? q : q.transpose
+        let right = FrameTransform(kind: .cmTrueNorth, attitudeMatrix: reported, convention: convention)
+        let viaQuat = FrameTransform(kind: .cmTrueNorth, attitude: simd_quatd(reported), convention: convention)
+        for ft in [right, viaQuat] {
+            let c = centerAzAlt(ft)
+            #expect(abs(wrap180(c.az - 45)) < 1e-9 && abs(c.alt) < 1e-9)
+        }
+        // Negative: the wrong convention must visibly break the view (so G2 can detect it).
+        let wrong: AttitudeConvention = convention == .deviceToReference ? .referenceToDevice : .deviceToReference
+        let bad = centerAzAlt(FrameTransform(kind: .cmTrueNorth, attitudeMatrix: reported, convention: wrong))
+        #expect(abs(wrap180(bad.az - 45)) > 1 || abs(bad.alt) > 1)
+    }
+
     @Test("Projection round-trip ≤ 0.5 px")
     func projectionRoundTrip() throws {
         for x in stride(from: 10.0, through: 380.0, by: 61.0) {
