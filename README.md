@@ -26,7 +26,13 @@
 작업 계획과 검증 게이트는 [`docs/PLAN.md`](docs/PLAN.md)에 있습니다.
 
 - [x] Step 0: 저장소 생성, GitHub 연동
-- [ ] M0-W1: SkyCore 좌표·하늘색 계산, 카탈로그 빌더, G1a 테스트
+- [x] M0-W1(자동화 가능 범위): SkyCore 좌표·하늘색 계산, 카탈로그 빌더(skypack v1), G1a 통과, CI. 사용자 조치 대기 항목은 [`docs/verification/W1-status.md`](docs/verification/W1-status.md)에 있다.
+
+### 로컬 테스트
+```bash
+./scripts/test-skycore.sh                                   # SkyCore(Swift) — G1a
+(cd backend && ./gradlew :tools:catalog-builder:test)       # 카탈로그 QA — T9
+```
 - [ ] M0-W2: 스카이뷰 MVP, 해질녘 재생, 로컬 ETL
 - [ ] M0-W3: 지수 발행, AWS 배포, 관리자 화면, 24시간 무인 운영
 
