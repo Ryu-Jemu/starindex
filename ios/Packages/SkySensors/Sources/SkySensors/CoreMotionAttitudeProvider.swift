@@ -65,8 +65,14 @@ public final class CoreMotionAttitudeProvider: AttitudeProvider {
     }
 
     public func start(condition: LocationCondition) {
+        guard manager.isDeviceMotionAvailable else { return }
+        if isRunning {
+            // e.g. activate() right after the permission alert: storing the new condition here would make the
+            // following location callback look unchanged and skip the true-north upgrade.
+            locationConditionChanged(condition)
+            return
+        }
         self.condition = condition
-        guard manager.isDeviceMotionAvailable, !isRunning else { return }
         guard let k = policy.initialKind(condition: condition, available: Self.availableKinds) else {
             isExhausted = true
             appendHistory("no motion frame available")

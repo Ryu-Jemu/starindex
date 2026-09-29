@@ -19,6 +19,8 @@ public final class LocationProvider: NSObject, CLLocationManagerDelegate {
 
     private let manager = CLLocationManager()
     private var headingActive = false
+    /// The sky screen is in the foreground and wants updates (set by startActive, cleared by stopActive).
+    private var wantsActive = false
 
     public override init() {
         super.init()
@@ -42,6 +44,7 @@ public final class LocationProvider: NSObject, CLLocationManagerDelegate {
 
     /// While the sky screen is active: continuous updates (trueHeading needs them) + heading.
     public func startActive() {
+        wantsActive = true
         guard isAuthorized else { return }
         manager.startUpdatingLocation()
         if CLLocationManager.headingAvailable() {
@@ -51,6 +54,11 @@ public final class LocationProvider: NSObject, CLLocationManagerDelegate {
     }
 
     public func stopActive() {
+        wantsActive = false
+        stopUpdates()
+    }
+
+    private func stopUpdates() {
         manager.stopUpdatingLocation()
         manager.stopUpdatingHeading()
         headingActive = false
@@ -85,7 +93,8 @@ public final class LocationProvider: NSObject, CLLocationManagerDelegate {
 
     nonisolated public func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
         Task { @MainActor in
-            if self.isAuthorized { self.startActive() } else { self.stopActive() }
+            // Permission can change while the app is in the background (Settings); only restart in the foreground.
+            if !self.isAuthorized { self.stopUpdates() } else if self.wantsActive { self.startActive() }
             self.onConditionChange?(self.condition)
         }
     }

@@ -33,6 +33,8 @@ final class SkyScene {
     @ObservationIgnored private var lastSensorSample: AttitudeSample?
     /// A sunset playback whose timing summary has not been logged yet.
     @ObservationIgnored private var playbackSummaryPending = false
+    /// Between activate() and deactivate() (foreground); location callbacks may not start sensors otherwise.
+    @ObservationIgnored private var isActive = false
 
     #if os(iOS)
     @ObservationIgnored let location = LocationProvider()
@@ -51,7 +53,7 @@ final class SkyScene {
         location.onConditionChange = { [weak self] condition in
             // First launch starts motion before the permission answer (magnetic); move up to true north,
             // and retry true north after the first fix or a precision change.
-            guard let self, self.useSensors else { return }
+            guard let self, self.useSensors, self.isActive else { return }
             CoreMotionAttitudeProvider.shared.locationConditionChanged(condition)
         }
         useSensors = CoreMotionAttitudeProvider.isAvailable
@@ -85,6 +87,7 @@ final class SkyScene {
     }
 
     func activate() {
+        isActive = true
         #if os(iOS)
         if location.authorization == .notDetermined { location.requestAuthorization() }
         location.startActive()
@@ -93,6 +96,12 @@ final class SkyScene {
     }
 
     func deactivate() {
+        isActive = false
+        if playbackSummaryPending {
+            // The uptime-based clock keeps running in the background; a later "finished" would be misleading.
+            playbackSummaryPending = false
+            diagnostics.endSegment(note: "interrupted (background)")
+        }
         #if os(iOS)
         location.stopActive()
         CoreMotionAttitudeProvider.shared.stop()
@@ -126,6 +135,7 @@ final class SkyScene {
         clock.mode = .playing(plan, startUptime: ProcessInfo.processInfo.systemUptime)
         snapshotUptime = -1
         // G5 is judged on the playback (snapshot rebuilt every frame): time it as one segment.
+        if playbackSummaryPending { diagnostics.endSegment(note: "restarted") }
         diagnostics.beginSegment(String(format: "sunset playback %.1f s", plan.totalRealSeconds))
         playbackSummaryPending = true
     }
@@ -148,8 +158,15 @@ final class SkyScene {
 
     /// Called from the TimelineView on every frame.
     func frame(size: CGSize, uptime: TimeInterval, now: Date) -> (SkyFrame, SkySnapshot) {
-        let t0 = DispatchTime.now().uptimeNanoseconds
         let t = clock.date(atUptime: uptime, wallNow: now)
+        // Diagnostics bookkeeping (percentile sorts, stderr) reports earlier frames and stays outside the
+        // timed window below, so G5 numbers do not include the cost of measuring.
+        if playbackSummaryPending, t.finished {
+            playbackSummaryPending = false
+            diagnostics.endSegment(note: "finished")
+        }
+        diagnostics.tick(uptime: uptime) { diagnosticsLines() }
+        let t0 = DispatchTime.now().uptimeNanoseconds
         if !clock.isLive || uptime - snapshotUptime >= 1 || snapshotUptime < 0 {
             snapshot = SkySnapshot.build(catalog: catalog, date: t.date, observer: observer)
             snapshotUptime = uptime
@@ -158,11 +175,6 @@ final class SkyScene {
         let frame = SkyFrameBuilder.build(catalog: catalog, snapshot: snapshot, transform: currentTransform(), camera: camera)
         lastFrame = frame
         diagnostics.recordFrame(uptime: uptime, startNs: t0, buildMs: Double(DispatchTime.now().uptimeNanoseconds - t0) / 1e6)
-        if playbackSummaryPending, t.finished {
-            playbackSummaryPending = false
-            diagnostics.endSegment(note: "finished")
-        }
-        diagnostics.tick(uptime: uptime) { diagnosticsLines() }
         return (frame, snapshot)
     }
 
