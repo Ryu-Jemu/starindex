@@ -76,29 +76,40 @@ struct SkySensorsTests {
         #expect(s2.isStale(e, regionId: "seoul", now: Date().addingTimeInterval(31 * 60)))
     }
 
-    @Test("Motion frame policy: chain order, fallback, no retry of failed true north (G3)")
+    @Test("Motion frame policy: chain order, fallback, true north retried only under a new location condition (G3)")
     func motionFramePolicy() {
         let all: Set<FrameKind> = [.cmTrueNorth, .cmMagnetic, .cmArbitrary]
+        let reducedNoFix = LocationCondition(authorized: true, precise: false, hasFix: false)
+        let reducedFix = LocationCondition(authorized: true, precise: false, hasFix: true)
+        let preciseFix = LocationCondition(authorized: true, precise: true, hasFix: true)
         var p = MotionFramePolicy()
         // True north only with location authorization.
-        #expect(p.initialKind(locationAuthorized: true, available: all) == .cmTrueNorth)
-        #expect(p.initialKind(locationAuthorized: false, available: all) == .cmMagnetic)
-        #expect(p.initialKind(locationAuthorized: true, available: [.cmArbitrary]) == .cmArbitrary)
-        #expect(p.initialKind(locationAuthorized: true, available: []) == nil)
-        // Authorization granted later: upgrade from magnetic, never from true north itself.
-        #expect(p.shouldUpgrade(from: .cmMagnetic, locationAuthorized: true, available: all))
-        #expect(!p.shouldUpgrade(from: .cmMagnetic, locationAuthorized: false, available: all))
-        #expect(!p.shouldUpgrade(from: .cmTrueNorth, locationAuthorized: true, available: all))
-        #expect(!p.shouldUpgrade(from: .manual, locationAuthorized: true, available: all))
+        #expect(p.initialKind(condition: reducedNoFix, available: all) == .cmTrueNorth)
+        #expect(p.initialKind(condition: .unauthorized, available: all) == .cmMagnetic)
+        #expect(p.initialKind(condition: reducedFix, available: [.cmArbitrary]) == .cmArbitrary)
+        #expect(p.initialKind(condition: reducedFix, available: []) == nil)
+        // Unauthorized normalizes precision and fix away.
+        #expect(LocationCondition(authorized: false, precise: true, hasFix: true) == .unauthorized)
+        // Permission granted later: upgrade from magnetic, never from true north itself or manual.
+        #expect(p.shouldUpgrade(from: .cmMagnetic, condition: reducedNoFix, available: all))
+        #expect(!p.shouldUpgrade(from: .cmMagnetic, condition: .unauthorized, available: all))
+        #expect(!p.shouldUpgrade(from: .cmTrueNorth, condition: reducedNoFix, available: all))
+        #expect(!p.shouldUpgrade(from: .manual, condition: reducedNoFix, available: all))
         // Fallback walks the chain and ends in nil (→ manual).
-        #expect(p.fallback(from: .cmTrueNorth, locationAuthorized: true, available: all) == .cmMagnetic)
-        #expect(p.fallback(from: .cmMagnetic, locationAuthorized: true, available: all) == .cmArbitrary)
-        #expect(p.fallback(from: .cmArbitrary, locationAuthorized: true, available: all) == nil)
-        #expect(p.fallback(from: .cmTrueNorth, locationAuthorized: true, available: [.cmTrueNorth, .cmArbitrary]) == .cmArbitrary)
-        // Once true north failed it is neither chosen nor upgraded to again.
-        #expect(p.trueNorthFailed)
-        #expect(p.initialKind(locationAuthorized: true, available: all) == .cmMagnetic)
-        #expect(!p.shouldUpgrade(from: .cmMagnetic, locationAuthorized: true, available: all))
+        #expect(p.fallback(from: .cmTrueNorth, condition: reducedNoFix, available: all) == .cmMagnetic)
+        #expect(p.fallback(from: .cmMagnetic, condition: reducedNoFix, available: all) == .cmArbitrary)
+        #expect(p.fallback(from: .cmArbitrary, condition: reducedNoFix, available: all) == nil)
+        #expect(p.fallback(from: .cmTrueNorth, condition: reducedNoFix, available: [.cmTrueNorth, .cmArbitrary]) == .cmArbitrary)
+        // Failed under "reduced, no fix": not retried under the same condition…
+        #expect(p.trueNorthFailedUnder == reducedNoFix)
+        #expect(p.initialKind(condition: reducedNoFix, available: all) == .cmMagnetic)
+        #expect(!p.shouldUpgrade(from: .cmMagnetic, condition: reducedNoFix, available: all))
+        // …but retried once the first fix arrives (CMErrorTrueNorthNotAvailable usually means no location yet).
+        #expect(p.shouldUpgrade(from: .cmMagnetic, condition: reducedFix, available: all))
+        // A second failure under the new condition latches for it; a precision change allows one more try.
+        #expect(p.fallback(from: .cmTrueNorth, condition: reducedFix, available: all) == .cmMagnetic)
+        #expect(!p.shouldUpgrade(from: .cmMagnetic, condition: reducedFix, available: all))
+        #expect(p.shouldUpgrade(from: .cmMagnetic, condition: preciseFix, available: all))
         // Watchdog: 5 s without a sample.
         #expect(!MotionFramePolicy.timedOut(startedAt: 10, now: 14.9, hasSample: false))
         #expect(MotionFramePolicy.timedOut(startedAt: 10, now: 15, hasSample: false))

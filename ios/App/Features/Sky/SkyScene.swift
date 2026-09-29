@@ -27,6 +27,12 @@ final class SkyScene {
     @ObservationIgnored private(set) var lastFrame: SkyFrame?
     @ObservationIgnored private(set) var lastAttitudeKind: FrameKind = .manual
     @ObservationIgnored let diagnostics = SkyDiagnostics()
+    /// Motion session seen last frame; a new one resets per-session state.
+    @ObservationIgnored private var motionSession = -1
+    /// Last filtered sensor pose, held while a new motion frame waits for its first sample.
+    @ObservationIgnored private var lastSensorSample: AttitudeSample?
+    /// A sunset playback whose timing summary has not been logged yet.
+    @ObservationIgnored private var playbackSummaryPending = false
 
     #if os(iOS)
     @ObservationIgnored let location = LocationProvider()
@@ -42,10 +48,11 @@ final class SkyScene {
         self.snapshot = SkySnapshot.build(catalog: catalog, date: Date(), observer: .seoul)
         #if os(iOS)
         location.onUpdate = { [weak self] obs in self?.setObserver(obs, isDefault: false) }
-        location.onAuthorizationChange = { [weak self] authorized in
-            // First launch starts motion before the permission answer (magnetic); move up to true north.
+        location.onConditionChange = { [weak self] condition in
+            // First launch starts motion before the permission answer (magnetic); move up to true north,
+            // and retry true north after the first fix or a precision change.
             guard let self, self.useSensors else { return }
-            CoreMotionAttitudeProvider.shared.locationAuthorizationChanged(authorized: authorized)
+            CoreMotionAttitudeProvider.shared.locationConditionChanged(condition)
         }
         useSensors = CoreMotionAttitudeProvider.isAvailable
         #endif
@@ -53,9 +60,14 @@ final class SkyScene {
 
     // MARK: Lifecycle
 
-    /// DEBUG-only launch arguments for automated screenshots / demo rehearsal:
-    /// `-look <az>,<alt>` (manual view), `-fov <deg>`, `-playSunset`, `-diag` (panel + stderr log, G3/G5).
-    func applyDebugLaunchArguments(_ args: [String] = ProcessInfo.processInfo.arguments) {
+    /// Launch arguments (only a developer can pass them, e.g. with `devicectl`):
+    /// - `-diag`: diagnostics panel + stderr log (G3/G5). Also in Release, so G5 is measured with optimization.
+    /// - DEBUG only, for screenshots and demo rehearsal: `-look <az>,<alt>` (manual view), `-fov <deg>`, `-playSunset`.
+    func applyLaunchArguments(_ args: [String] = ProcessInfo.processInfo.arguments) {
+        if args.contains("-diag") {
+            diagnostics.showsPanel = true
+            diagnostics.logsToConsole = true
+        }
         #if DEBUG
         func value(after flag: String) -> String? {
             args.firstIndex(of: flag).flatMap { $0 + 1 < args.count ? args[$0 + 1] : nil }
@@ -69,10 +81,6 @@ final class SkyScene {
         }
         if let fov = value(after: "-fov").flatMap(Double.init) { fovDeg = min(100, max(20, fov)) }
         if args.contains("-playSunset") { playSunset() }
-        if args.contains("-diag") {
-            diagnostics.showsPanel = true
-            diagnostics.logsToConsole = true
-        }
         #endif
     }
 
@@ -80,7 +88,7 @@ final class SkyScene {
         #if os(iOS)
         if location.authorization == .notDetermined { location.requestAuthorization() }
         location.startActive()
-        if useSensors { CoreMotionAttitudeProvider.shared.start(locationAuthorized: location.isAuthorized) }
+        if useSensors { CoreMotionAttitudeProvider.shared.start(condition: location.condition) }
         #endif
     }
 
@@ -101,10 +109,9 @@ final class SkyScene {
         #if os(iOS)
         guard CoreMotionAttitudeProvider.isAvailable else { useSensors = false; return }
         useSensors.toggle()
-        filter.reset()
+        lastSensorSample = nil
         if useSensors {
-            CoreMotionAttitudeProvider.shared.start(locationAuthorized: location.isAuthorized)
-            calibration.motionRestarted()
+            CoreMotionAttitudeProvider.shared.start(condition: location.condition)
         } else {
             CoreMotionAttitudeProvider.shared.stop()
         }
@@ -118,14 +125,24 @@ final class SkyScene {
         guard let plan = SunsetPlaybackPlanner.plan(after: now.addingTimeInterval(-6 * 3600), observer: observer) else { return }
         clock.mode = .playing(plan, startUptime: ProcessInfo.processInfo.systemUptime)
         snapshotUptime = -1
+        // G5 is judged on the playback (snapshot rebuilt every frame): time it as one segment.
+        diagnostics.beginSegment(String(format: "sunset playback %.1f s", plan.totalRealSeconds))
+        playbackSummaryPending = true
     }
 
     func goLive() {
+        if playbackSummaryPending {
+            playbackSummaryPending = false
+            diagnostics.endSegment(note: "stopped early")
+        }
         clock.mode = .live
         snapshotUptime = -1
     }
 
     var isPlaying: Bool { !clock.isLive }
+
+    /// Time of the sky currently drawn (simulated during playback).
+    var displayedDate: Date { snapshot.date }
 
     // MARK: Per frame
 
@@ -140,7 +157,11 @@ final class SkyScene {
         let camera = CameraModel(viewportWidth: max(1, size.width), viewportHeight: max(1, size.height), fovVerticalDeg: fovDeg)
         let frame = SkyFrameBuilder.build(catalog: catalog, snapshot: snapshot, transform: currentTransform(), camera: camera)
         lastFrame = frame
-        diagnostics.recordFrame(uptime: uptime, buildMs: Double(DispatchTime.now().uptimeNanoseconds - t0) / 1e6)
+        diagnostics.recordFrame(uptime: uptime, startNs: t0, buildMs: Double(DispatchTime.now().uptimeNanoseconds - t0) / 1e6)
+        if playbackSummaryPending, t.finished {
+            playbackSummaryPending = false
+            diagnostics.endSegment(note: "finished")
+        }
         diagnostics.tick(uptime: uptime) { diagnosticsLines() }
         return (frame, snapshot)
     }
@@ -148,10 +169,23 @@ final class SkyScene {
     private func currentTransform() -> FrameTransform {
         var sample: AttitudeSample?
         #if os(iOS)
-        if useSensors, let s = CoreMotionAttitudeProvider.shared.latest() {
-            // A frame change (fallback or upgrade) makes the old filter state meaningless.
-            if s.kind != lastAttitudeKind { filter.reset() }
-            sample = filter.filter(s)
+        if useSensors {
+            let motion = CoreMotionAttitudeProvider.shared
+            // New session (start, fallback, upgrade): the filter state and the cmArbitrary ψ belong to the old
+            // one. A session that `latest()` starts below returns no sample and is picked up next frame.
+            if motion.sessionID != motionSession {
+                motionSession = motion.sessionID
+                filter.reset()
+                calibration.motionRestarted()
+            }
+            if let s = motion.latest() {
+                sample = filter.filter(s)
+                lastSensorSample = sample
+            } else if motion.isRunning {
+                sample = lastSensorSample      // new frame waiting for its first sample (≤5 s): hold the last view
+            } else {
+                lastSensorSample = nil         // chain exhausted: manual view, drag enabled
+            }
         }
         #endif
         let s = sample ?? manual.latest()!
@@ -195,8 +229,17 @@ final class SkyScene {
         return best?.0
     }
 
+    /// Sensors move the view (manual drag is ignored) unless the motion chain ran out.
+    var sensorsDriveView: Bool {
+        #if os(iOS)
+        useSensors && CoreMotionAttitudeProvider.shared.isRunning
+        #else
+        false
+        #endif
+    }
+
     func drag(dx: Double, dy: Double, size: CGSize) {
-        if useSensors { return }
+        if sensorsDriveView { return }
         manual.drag(dx: dx, dy: dy, camera: CameraModel(viewportWidth: size.width, viewportHeight: size.height, fovVerticalDeg: fovDeg))
     }
 }

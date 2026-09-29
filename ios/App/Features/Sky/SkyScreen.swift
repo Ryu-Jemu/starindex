@@ -36,10 +36,16 @@ struct SkyScreen: View {
         .task { prewarmShader() }
         .onAppear {
             scene.activate()
-            scene.applyDebugLaunchArguments()
+            scene.applyLaunchArguments()
         }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .active { scene.activate() } else { scene.deactivate() }
+            // Only `.background` stops the sensors: `.inactive` also covers system alerts (the location
+            // prompt), Control Center and the notification shade, where the sky should keep following the phone.
+            switch phase {
+            case .active: scene.activate()
+            case .background: scene.deactivate()
+            default: break
+            }
         }
     }
 
