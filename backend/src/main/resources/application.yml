@@ -1,0 +1,42 @@
+spring:
+  application:
+    name: starindex
+  datasource:
+    url: jdbc:mysql://127.0.0.1:3306/starindex?serverTimezone=Asia/Seoul&characterEncoding=utf8
+    username: starindex
+    password: ${DB_PASSWORD:starindex-local}
+    hikari:
+      maximum-pool-size: 10
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+  flyway:
+    enabled: true
+  batch:
+    jdbc:
+      initialize-schema: never   # Flyway owns BATCH_* (V1)
+    job:
+      enabled: false             # jobs are started by the scheduler / admin API, not at boot
+  data:
+    redis:
+      host: 127.0.0.1
+      port: 6379
+
+server:
+  port: 8080
+  tomcat:
+    use-relative-redirects: true
+
+# Actuator only on loopback:8081 (CodeDeploy validate.sh); the public port exposes /api/health.
+management:
+  server:
+    port: 8081
+    address: 127.0.0.1
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never

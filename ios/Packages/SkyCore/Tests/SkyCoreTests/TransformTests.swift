@@ -91,6 +91,19 @@ struct TransformTests {
         #expect(ConstellationLocator.locate(j2000: SIMD3<Double>(0, 0, 0)) == nil)
     }
 
+    @Test("Fast Swift refraction equals AE REFRACTION_NORMAL everywhere")
+    func fastRefractionMatchesAE() {
+        let e = AstroEngine.shared
+        for i in 0...18_000 {
+            let alt = -90.0 + Double(i) * 0.01
+            #expect(abs(Refraction.fastDegrees(altitudeDeg: alt) - e.refraction(altitudeDeg: alt)) < 1e-12, "alt \(alt)")
+        }
+        // Vector form keeps azimuth and matches the Double path.
+        let h = Horizontal.vector(altitudeDeg: 3.2, azimuthDeg: 211)
+        let fast = Refraction.fastRefract(SIMD3<Float>(h))
+        #expect(angleDeg(SIMD3<Double>(fast), Refraction.refract(h)) * 3600 < 0.5)
+    }
+
     @Test("Time anchor: J2000 epoch is ut = 0 and Date ↔ astro_time_t round-trips")
     func timeAnchor() {
         #expect(AstroEngine.astroTime(utc("2000-01-01T12:00:00Z")).ut == 0)

@@ -19,7 +19,7 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-java@v6
@@ -27,9 +27,9 @@ jobs:
           distribution: temurin
           java-version: "21"
       - uses: gradle/actions/setup-gradle@v6
-      - name: Catalog builder tests (T9)
+      - name: Backend tests (Testcontainers MySQL 8.4) + catalog builder (T9)
         working-directory: backend
-        run: ./gradlew --no-daemon :tools:catalog-builder:test
+        run: ./gradlew --no-daemon test
       - name: Rebuild skypack and compare with committed artifact
         working-directory: backend
         run: |

@@ -40,6 +40,12 @@ public struct SolarState: Sendable {
     /// Unit vector toward the refracted Sun in the horizontal frame.
     public var apparentHorizontal: SIMD3<Double>
 
+    public init(geometricAltitudeDeg: Double, altitudeRateDegPerMin: Double, apparentHorizontal: SIMD3<Double>) {
+        self.geometricAltitudeDeg = geometricAltitudeDeg
+        self.altitudeRateDegPerMin = altitudeRateDegPerMin
+        self.apparentHorizontal = apparentHorizontal
+    }
+
     public static func compute(date: Date, observer: ObserverLocation, engine: AstroEngine = .shared) -> SolarState? {
         guard let h0 = engine.geometricAltitude(.sun, date: date, observer: observer),
               let h1 = engine.geometricAltitude(.sun, date: date.addingTimeInterval(60), observer: observer),

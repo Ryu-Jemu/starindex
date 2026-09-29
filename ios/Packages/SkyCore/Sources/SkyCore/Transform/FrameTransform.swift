@@ -31,6 +31,9 @@ public enum AttitudeConvention: Sendable, Equatable {
     func referenceToDevice(_ r: simd_double3x3) -> simd_double3x3 {
         self == .deviceToReference ? r.transpose : r
     }
+
+    /// A (reference → device) from a sensor rotation, under this convention.
+    public func referenceToDeviceMatrix(_ r: simd_double3x3) -> simd_double3x3 { referenceToDevice(r) }
 }
 
 /// Maps horizontal (HOR) vectors to device coordinates and back.

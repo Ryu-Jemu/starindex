@@ -18,4 +18,5 @@ if [ "${DEVELOPER_DIR:-}" = "/Library/Developer/CommandLineTools" ]; then
 fi
 
 cd "$here/../ios/Packages/SkyCore"
-exec swift test --scratch-path "$scratch" "${extra[@]}" "$@"
+# ${extra[@]+...}: bash 3.2 (macOS) treats an empty array as unbound under `set -u`.
+exec swift test --scratch-path "$scratch" ${extra[@]+"${extra[@]}"} "$@"

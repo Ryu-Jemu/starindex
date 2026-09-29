@@ -46,3 +46,7 @@ data/viirs/*.tif.gz
 
 # Logs
 *.log
+
+# XcodeGen output (source of truth: ios/project.yml)
+ios/StarIndex.xcodeproj/
+ios/App/Info.plist
