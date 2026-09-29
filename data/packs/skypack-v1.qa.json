@@ -1,0 +1,22 @@
+{
+  "packFile" : "skypack-v1.bin",
+  "sha256" : "d478a1aeb54161542861103f823896ed87b6dad594b37f64939a023ff9abbb97",
+  "bytes" : 82747,
+  "sourceRows" : 9110,
+  "positionlessRows" : 14,
+  "magLimit" : 5.5,
+  "epoch" : 2026.5,
+  "starsIncluded" : 2893,
+  "starsWithinMagLimit" : 2887,
+  "lineStarsBeyondLimit" : 6,
+  "lineOnlyPoints" : 0,
+  "constellations" : 88,
+  "segments" : 743,
+  "lineVertices" : 893,
+  "matchedVertices" : 893,
+  "maxMatchArcsec" : 9.1,
+  "unmatchedVertices" : [ ],
+  "namedStars" : 324,
+  "duplicateHr" : 0,
+  "constellationsMissingKo" : 0
+}

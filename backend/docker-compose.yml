@@ -1,0 +1,32 @@
+# Local development (M0-W1/W2): MySQL 8.4 (same major as RDS) + Valkey 8 (Redis-compatible, ADR-005).
+# Usage: docker compose -f backend/docker-compose.yml up -d
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: starindex-mysql
+    environment:
+      MYSQL_DATABASE: starindex
+      MYSQL_USER: starindex
+      MYSQL_PASSWORD: starindex-local
+      MYSQL_ROOT_PASSWORD: root-local
+      TZ: Asia/Seoul
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_0900_ai_ci"]
+    ports: ["127.0.0.1:3306:3306"]
+    volumes: ["mysql-data:/var/lib/mysql"]
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-proot-local"]
+      interval: 5s
+      retries: 20
+
+  valkey:
+    image: valkey/valkey:8
+    container_name: starindex-valkey
+    command: ["valkey-server", "--maxmemory", "128mb", "--maxmemory-policy", "volatile-lru", "--save", ""]
+    ports: ["127.0.0.1:6379:6379"]
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      retries: 20
+
+volumes:
+  mysql-data:
