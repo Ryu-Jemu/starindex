@@ -1,0 +1,38 @@
+name: backend
+
+# Linux runners only (private repo: macOS minutes are ~10x). iOS tests run locally via
+# scripts/test-skycore.sh.
+on:
+  push:
+    branches: [main]
+    paths: ["backend/**", "data/catalog-src/**", ".github/workflows/backend.yml"]
+  pull_request:
+    paths: ["backend/**", "data/catalog-src/**", ".github/workflows/backend.yml"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backend-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@v6
+      - name: Catalog builder tests (T9)
+        working-directory: backend
+        run: ./gradlew --no-daemon :tools:catalog-builder:test
+      - name: Rebuild skypack and compare with committed artifact
+        working-directory: backend
+        run: |
+          # The run task's working directory is the repo root.
+          ./gradlew --no-daemon -q :tools:catalog-builder:run --args="--mag 5.5 --version 1 --out backend/build/ci-packs"
+          cmp build/ci-packs/skypack-v1.bin ../data/packs/skypack-v1.bin
