@@ -1,0 +1,48 @@
+# macOS
+.DS_Store
+
+# Secrets / local env (never commit)
+.env
+*.env
+!*.env.example
+*.p8
+*.p12
+*.pem
+*.key
+*.mobileprovision
+secrets/
+
+# Xcode / SwiftPM
+DerivedData/
+xcuserdata/
+*.xcuserstate
+.build/
+.swiftpm/
+build/
+ios/UnityExport/
+
+# Gradle / JVM / IDE
+.gradle/
+**/build/
+!gradle/wrapper/gradle-wrapper.jar
+.idea/
+*.iml
+out/
+
+# Unity
+unity/StarAR/[Ll]ibrary/
+unity/StarAR/[Tt]emp/
+unity/StarAR/[Oo]bj/
+unity/StarAR/[Bb]uild/
+unity/StarAR/[Bb]uilds/
+unity/StarAR/[Ll]ogs/
+unity/StarAR/[Uu]ser[Ss]ettings/
+unity/StarAR/*.csproj
+unity/StarAR/*.sln
+
+# Large data (raw rasters are regenerated, not versioned)
+data/viirs/*.tif
+data/viirs/*.tif.gz
+
+# Logs
+*.log
