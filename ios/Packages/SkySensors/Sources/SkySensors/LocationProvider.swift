@@ -10,7 +10,11 @@ public final class LocationProvider: NSObject, CLLocationManagerDelegate {
     public private(set) var observer: ObserverLocation?
     public private(set) var lastFix: Date?
     public private(set) var headingAccuracy: Double?
+    /// Horizontal accuracy of the last fix in metres (diagnostics only; coordinates are never logged).
+    public private(set) var horizontalAccuracy: Double?
     public var onUpdate: (@MainActor (ObserverLocation) -> Void)?
+    /// Called with `isAuthorized` whenever the authorization changes (motion upgrades to true north).
+    public var onAuthorizationChange: (@MainActor (Bool) -> Void)?
 
     private let manager = CLLocationManager()
 
@@ -25,6 +29,8 @@ public final class LocationProvider: NSObject, CLLocationManagerDelegate {
     public var isAuthorized: Bool {
         authorization == .authorizedWhenInUse || authorization == .authorizedAlways
     }
+    /// `.reducedAccuracy` unless the user turned on Precise Location.
+    public var accuracyAuthorization: CLAccuracyAuthorization { manager.accuracyAuthorization }
 
     public func requestAuthorization() { manager.requestWhenInUseAuthorization() }
 
@@ -48,9 +54,11 @@ public final class LocationProvider: NSObject, CLLocationManagerDelegate {
         let obs = ObserverLocation(latitude: l.coordinate.latitude, longitude: l.coordinate.longitude,
                                    heightMeters: max(0, l.altitude))
         let ts = l.timestamp
+        let acc = l.horizontalAccuracy
         Task { @MainActor in
             self.observer = obs
             self.lastFix = ts
+            self.horizontalAccuracy = acc
             self.onUpdate?(obs)
         }
     }
@@ -63,6 +71,7 @@ public final class LocationProvider: NSObject, CLLocationManagerDelegate {
     nonisolated public func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
         Task { @MainActor in
             if self.isAuthorized { self.startActive() }
+            self.onAuthorizationChange?(self.isAuthorized)
         }
     }
 

@@ -16,8 +16,8 @@ settings:
     SWIFT_VERSION: "6.0"
     MARKETING_VERSION: "0.1.0"
     CURRENT_PROJECT_VERSION: "1"
-    # Set after signing in to Xcode with the Apple Developer account (G0).
-    DEVELOPMENT_TEAM: ""
+    # Apple Developer team (public identifier, embedded in every signed binary).
+    DEVELOPMENT_TEAM: YRYU26Z2F4
     CODE_SIGN_STYLE: Automatic
 targets:
   StarIndex:

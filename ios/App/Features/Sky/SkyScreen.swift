@@ -14,8 +14,13 @@ struct SkyScreen: View {
             TimelineView(.animation) { timeline in
                 let (frame, snap) = scene.frame(size: geo.size, uptime: ProcessInfo.processInfo.systemUptime, now: timeline.date)
                 ZStack {
-                    Canvas { ctx, _ in SkyRenderer.draw(frame, in: &ctx) }
+                    Canvas { ctx, _ in
+                        let t0 = DispatchTime.now().uptimeNanoseconds
+                        SkyRenderer.draw(frame, in: &ctx)
+                        scene.diagnostics.recordDraw(ms: Double(DispatchTime.now().uptimeNanoseconds - t0) / 1e6)
+                    }
                     SkyHUD(scene: scene, frame: frame, snapshot: snap)
+                    if scene.diagnostics.showsPanel { DiagnosticsPanel(text: scene.diagnostics.text) }
                 }
             }
             .contentShape(Rectangle())
@@ -72,6 +77,59 @@ struct SkyScreen: View {
     }
 }
 
+/// Attitude source and heading accuracy (plan 4.1-4): green ≤10°, yellow ≤25°, red otherwise.
+struct HeadingBadge: View {
+    let kind: FrameKind
+    let quality: HeadingQuality
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Circle().fill(color).frame(width: 7, height: 7)
+            Text(label).font(.caption2)
+        }
+        .opacity(0.9)
+    }
+
+    private var label: String {
+        switch kind {
+        case .cmTrueNorth: "진북 기준"
+        case .cmMagnetic: "자북 + 편각 보정"
+        case .cmArbitrary: "방위 기준 없음 · 천체로 맞추세요"
+        case .manual: "수동"
+        default: kind.rawValue
+        }
+    }
+
+    private var color: Color {
+        switch quality {
+        case .good: .green
+        case .fair: .yellow
+        case .poor, .invalid: .red
+        case .unknown: .gray
+        }
+    }
+}
+
+/// DEBUG diagnostics text (G3/G5), see `SkyDiagnostics`.
+struct DiagnosticsPanel: View {
+    let text: String
+
+    var body: some View {
+        VStack {
+            Spacer()
+            Text(text)
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundStyle(.green)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(8)
+                .background(.black.opacity(0.6), in: .rect(cornerRadius: 8))
+                .padding(.horizontal, 8)
+                .padding(.bottom, 100)
+        }
+        .allowsHitTesting(false)
+    }
+}
+
 /// Heads-up display over the sky.
 struct SkyHUD: View {
     let scene: SkyScene
@@ -84,6 +142,13 @@ struct SkyHUD: View {
             VStack(spacing: 6) {
                 Text(snapshot.sun.phase.hudText)
                     .font(.headline)
+                    #if DEBUG
+                    .onLongPressGesture {
+                        let d = scene.diagnostics
+                        d.showsPanel.toggle()
+                        d.logsToConsole = d.showsPanel
+                    }
+                    #endif
                 HStack(spacing: 8) {
                     chip("오늘 밤 지수 · ETL 연결 예정", systemImage: "sparkles")
                     if scene.observerIsDefault { chip("서울(기본 위치)", systemImage: "location.slash") }
@@ -99,6 +164,7 @@ struct SkyHUD: View {
             // Center reticle.
             VStack(spacing: 4) {
                 Image(systemName: "plus").font(.system(size: 18, weight: .light)).opacity(0.8)
+                HeadingBadge(kind: scene.lastAttitudeKind, quality: scene.headingQuality)
                 Text("\(Self.compass(frame.reticleAzimuth)) \(Int(frame.reticleAzimuth.rounded()))° · 고도 \(Int(frame.reticleAltitude.rounded()))°")
                     .font(.caption.monospacedDigit())
                 if let c = frame.reticleConstellation { Text(c).font(.caption2).opacity(0.8) }

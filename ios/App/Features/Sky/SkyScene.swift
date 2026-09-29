@@ -3,6 +3,9 @@ import Observation
 import simd
 import SkyCore
 import SkySensors
+#if os(iOS)
+import CoreMotion
+#endif
 
 /// Owns the catalog, time, observer and attitude; produces one `SkyFrame` per rendered frame.
 @MainActor
@@ -23,6 +26,7 @@ final class SkyScene {
     @ObservationIgnored private var snapshotUptime: TimeInterval = -1
     @ObservationIgnored private(set) var lastFrame: SkyFrame?
     @ObservationIgnored private(set) var lastAttitudeKind: FrameKind = .manual
+    @ObservationIgnored let diagnostics = SkyDiagnostics()
 
     #if os(iOS)
     @ObservationIgnored let location = LocationProvider()
@@ -38,6 +42,11 @@ final class SkyScene {
         self.snapshot = SkySnapshot.build(catalog: catalog, date: Date(), observer: .seoul)
         #if os(iOS)
         location.onUpdate = { [weak self] obs in self?.setObserver(obs, isDefault: false) }
+        location.onAuthorizationChange = { [weak self] authorized in
+            // First launch starts motion before the permission answer (magnetic); move up to true north.
+            guard let self, self.useSensors else { return }
+            CoreMotionAttitudeProvider.shared.locationAuthorizationChanged(authorized: authorized)
+        }
         useSensors = CoreMotionAttitudeProvider.isAvailable
         #endif
     }
@@ -45,7 +54,7 @@ final class SkyScene {
     // MARK: Lifecycle
 
     /// DEBUG-only launch arguments for automated screenshots / demo rehearsal:
-    /// `-look <az>,<alt>` (manual view), `-fov <deg>`, `-playSunset`.
+    /// `-look <az>,<alt>` (manual view), `-fov <deg>`, `-playSunset`, `-diag` (panel + stderr log, G3/G5).
     func applyDebugLaunchArguments(_ args: [String] = ProcessInfo.processInfo.arguments) {
         #if DEBUG
         func value(after flag: String) -> String? {
@@ -60,6 +69,10 @@ final class SkyScene {
         }
         if let fov = value(after: "-fov").flatMap(Double.init) { fovDeg = min(100, max(20, fov)) }
         if args.contains("-playSunset") { playSunset() }
+        if args.contains("-diag") {
+            diagnostics.showsPanel = true
+            diagnostics.logsToConsole = true
+        }
         #endif
     }
 
@@ -118,6 +131,7 @@ final class SkyScene {
 
     /// Called from the TimelineView on every frame.
     func frame(size: CGSize, uptime: TimeInterval, now: Date) -> (SkyFrame, SkySnapshot) {
+        let t0 = DispatchTime.now().uptimeNanoseconds
         let t = clock.date(atUptime: uptime, wallNow: now)
         if !clock.isLive || uptime - snapshotUptime >= 1 || snapshotUptime < 0 {
             snapshot = SkySnapshot.build(catalog: catalog, date: t.date, observer: observer)
@@ -126,19 +140,45 @@ final class SkyScene {
         let camera = CameraModel(viewportWidth: max(1, size.width), viewportHeight: max(1, size.height), fovVerticalDeg: fovDeg)
         let frame = SkyFrameBuilder.build(catalog: catalog, snapshot: snapshot, transform: currentTransform(), camera: camera)
         lastFrame = frame
+        diagnostics.recordFrame(uptime: uptime, buildMs: Double(DispatchTime.now().uptimeNanoseconds - t0) / 1e6)
+        diagnostics.tick(uptime: uptime) { diagnosticsLines() }
         return (frame, snapshot)
     }
 
     private func currentTransform() -> FrameTransform {
         var sample: AttitudeSample?
         #if os(iOS)
-        if useSensors, let s = CoreMotionAttitudeProvider.shared.latest() { sample = filter.filter(s) }
+        if useSensors, let s = CoreMotionAttitudeProvider.shared.latest() {
+            // A frame change (fallback or upgrade) makes the old filter state meaningless.
+            if s.kind != lastAttitudeKind { filter.reset() }
+            sample = filter.filter(s)
+        }
         #endif
         let s = sample ?? manual.latest()!
         lastAttitudeKind = s.kind
         let psi = calibration.entry(for: s.kind)?.psiDeg ?? 0
         let declination = s.kind == .cmMagnetic ? (DeclinationTable.declination(id: "seoul") ?? 0) : 0
         return FrameTransform(kind: s.kind, referenceToDevice: s.referenceToDevice, psiDeg: psi, declinationDeg: declination)
+    }
+
+    /// Heading badge for the HUD (plan 4.1-4): CLHeading accuracy, else magnetometer calibration.
+    var headingQuality: HeadingQuality {
+        #if os(iOS)
+        switch lastAttitudeKind {
+        case .cmTrueNorth, .cmMagnetic:
+            if let acc = location.headingAccuracy { return .from(headingAccuracy: acc) }
+            guard let mag = CoreMotionAttitudeProvider.shared.magneticFieldAccuracy else { return .unknown }
+            if mag == .high { return .good }
+            if mag == .medium { return .fair }
+            return mag == .low ? .poor : .invalid
+        case .cmArbitrary:
+            return .poor
+        default:
+            return .unknown
+        }
+        #else
+        return .unknown
+        #endif
     }
 
     // MARK: Interaction

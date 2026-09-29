@@ -76,6 +76,48 @@ struct SkySensorsTests {
         #expect(s2.isStale(e, regionId: "seoul", now: Date().addingTimeInterval(31 * 60)))
     }
 
+    @Test("Motion frame policy: chain order, fallback, no retry of failed true north (G3)")
+    func motionFramePolicy() {
+        let all: Set<FrameKind> = [.cmTrueNorth, .cmMagnetic, .cmArbitrary]
+        var p = MotionFramePolicy()
+        // True north only with location authorization.
+        #expect(p.initialKind(locationAuthorized: true, available: all) == .cmTrueNorth)
+        #expect(p.initialKind(locationAuthorized: false, available: all) == .cmMagnetic)
+        #expect(p.initialKind(locationAuthorized: true, available: [.cmArbitrary]) == .cmArbitrary)
+        #expect(p.initialKind(locationAuthorized: true, available: []) == nil)
+        // Authorization granted later: upgrade from magnetic, never from true north itself.
+        #expect(p.shouldUpgrade(from: .cmMagnetic, locationAuthorized: true, available: all))
+        #expect(!p.shouldUpgrade(from: .cmMagnetic, locationAuthorized: false, available: all))
+        #expect(!p.shouldUpgrade(from: .cmTrueNorth, locationAuthorized: true, available: all))
+        #expect(!p.shouldUpgrade(from: .manual, locationAuthorized: true, available: all))
+        // Fallback walks the chain and ends in nil (→ manual).
+        #expect(p.fallback(from: .cmTrueNorth, locationAuthorized: true, available: all) == .cmMagnetic)
+        #expect(p.fallback(from: .cmMagnetic, locationAuthorized: true, available: all) == .cmArbitrary)
+        #expect(p.fallback(from: .cmArbitrary, locationAuthorized: true, available: all) == nil)
+        #expect(p.fallback(from: .cmTrueNorth, locationAuthorized: true, available: [.cmTrueNorth, .cmArbitrary]) == .cmArbitrary)
+        // Once true north failed it is neither chosen nor upgraded to again.
+        #expect(p.trueNorthFailed)
+        #expect(p.initialKind(locationAuthorized: true, available: all) == .cmMagnetic)
+        #expect(!p.shouldUpgrade(from: .cmMagnetic, locationAuthorized: true, available: all))
+        // Watchdog: 5 s without a sample.
+        #expect(!MotionFramePolicy.timedOut(startedAt: 10, now: 14.9, hasSample: false))
+        #expect(MotionFramePolicy.timedOut(startedAt: 10, now: 15, hasSample: false))
+        #expect(!MotionFramePolicy.timedOut(startedAt: 10, now: 60, hasSample: true))
+    }
+
+    @Test("Rolling percentiles: nearest rank, ring buffer wrap, non-finite ignored")
+    func rollingPercentiles() {
+        var r = RollingPercentiles(capacity: 100)
+        #expect(r.percentile(95) == nil && r.maximum == nil)
+        for v in 1...100 { r.add(Double(v)) }
+        #expect(r.percentile(50) == 50 && r.percentile(95) == 95 && r.percentile(100) == 100 && r.percentile(0) == 1)
+        // Wrap: the oldest 50 values (1...50) are replaced by 1000.
+        for _ in 0..<50 { r.add(1000) }
+        #expect(r.count == 100 && r.percentile(50) == 100 && r.percentile(51) == 1000 && r.maximum == 1000)
+        r.add(.nan); r.add(.infinity)
+        #expect(r.count == 100 && r.maximum == 1000)
+    }
+
     @Test("Heading quality thresholds")
     func headingQuality() {
         #expect(HeadingQuality.from(headingAccuracy: -1) == .invalid)
