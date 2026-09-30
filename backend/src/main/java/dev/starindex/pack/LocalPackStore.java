@@ -2,10 +2,13 @@ package dev.starindex.pack;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.nio.file.DirectoryNotEmptyException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.util.List;
 import java.util.Optional;
+import java.util.stream.Stream;
 
 /** Writes packs under a local directory; each file is written to a temp file and moved atomically. */
 public class LocalPackStore implements PackStore {
@@ -17,7 +20,7 @@ public class LocalPackStore implements PackStore {
 
     private Path resolve(String path) {
         Path p = root.resolve(path).normalize();
-        if (!p.startsWith(root)) throw new IllegalArgumentException("path escapes the pack root: " + path);
+        if (!p.startsWith(root) || p.equals(root)) throw new IllegalArgumentException("path escapes the pack root: " + path);
         return p;
     }
 
@@ -39,6 +42,43 @@ public class LocalPackStore implements PackStore {
         Path p = resolve(path);
         try {
             return Files.exists(p) ? Optional.of(Files.readAllBytes(p)) : Optional.empty();
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
+    /** Also removes the version directory once it is empty (never the root or a kind directory like packs/index). */
+    @Override
+    public void delete(String path) {
+        Path p = resolve(path);
+        try {
+            Files.deleteIfExists(p);
+            Path dir = p.getParent();
+            if (dir != null && root.relativize(dir).getNameCount() >= 3) {
+                try {
+                    Files.deleteIfExists(dir);
+                } catch (DirectoryNotEmptyException ignored) {
+                    // other files of the same version remain
+                }
+            }
+        } catch (IOException e) {
+            throw new UncheckedIOException("pack delete failed: " + p, e);
+        }
+    }
+
+    @Override
+    public List<Entry> list(String prefix) {
+        Path start = resolve(prefix);
+        if (!Files.isDirectory(start)) return List.of();
+        try (Stream<Path> walk = Files.walk(start)) {
+            return walk.filter(Files::isRegularFile).map(f -> {
+                try {
+                    return new Entry(root.relativize(f).toString().replace(f.getFileSystem().getSeparator(), "/"),
+                            Files.getLastModifiedTime(f).toInstant());
+                } catch (IOException e) {
+                    throw new UncheckedIOException(e);
+                }
+            }).sorted(java.util.Comparator.comparing(Entry::path)).toList();
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }

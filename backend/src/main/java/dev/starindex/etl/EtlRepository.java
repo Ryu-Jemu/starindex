@@ -76,17 +76,6 @@ public class EtlRepository {
         return out;
     }
 
-    /**
-     * Retention: forecasts older than {@code forecastDays} (only the latest issue near the current night is ever read)
-     * and call audit rows older than {@code auditDays}. @return rows deleted per table
-     */
-    public Map<String, Integer> purge(int forecastDays, int auditDays) {
-        Map<String, Integer> n = new java.util.LinkedHashMap<>();
-        n.put("kma_forecast_hour", jdbc.update("DELETE FROM kma_forecast_hour WHERE fcst_at < now() - make_interval(days => ?)", forecastDays));
-        n.put("etl_api_call", jdbc.update("DELETE FROM etl_api_call WHERE called_at < now() - make_interval(days => ?)", auditDays));
-        return n;
-    }
-
     public Optional<Instant> latestBaseAt(int nx, int ny) {
         List<OffsetDateTime> l = jdbc.queryForList("SELECT MAX(base_at) FROM kma_forecast_hour WHERE nx = ? AND ny = ?",
                 OffsetDateTime.class, nx, ny);

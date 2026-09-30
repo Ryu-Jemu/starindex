@@ -262,6 +262,33 @@ class EtlJobsIntegrationTest extends IntegrationTestBase {
     }
 
     @Test
+    void aRetentionWarningDoesNotStopTheDailyJob() throws Exception {
+        org.junit.jupiter.api.Assumptions.assumeFalse("root".equals(System.getProperty("user.name")), "root ignores directory permissions");
+        WM.stubFor(get(urlPathEqualTo("/B090041/openapi/service/RiseSetInfoService/getLCRiseSetInfo"))
+                .willReturn(aResponse().withHeader("Content-Type", "application/xml").withBody(
+                        Fixtures.riseSet("{{request.query.locdate}}", "테스트", "{{request.query.latitude}}", "{{request.query.longitude}}", null, null))));
+        var now = java.time.Instant.now();
+        for (int i = 0; i < 4; i++) {   // four old index packs: only the oldest falls outside the newest three
+            String path = "packs/index/old" + i + "/index.json.gz";
+            packStore.put(path, new byte[]{1}, "application/gzip", PackStore.IMMUTABLE);
+            jdbc.update("INSERT INTO data_pack (kind, version, path, sha256, bytes, published_at) VALUES ('index', ?, ?, ?, 1, ?)",
+                    "old" + i, path, "0".repeat(64), java.time.OffsetDateTime.ofInstant(now.minus(java.time.Duration.ofDays(20 - i)), java.time.ZoneOffset.UTC));
+        }
+        java.io.File locked = PACKS.resolve("packs/index/old0").toFile();
+        assertTrue(locked.setWritable(false));
+        try {
+            JobExecution e = run(astroDailyJob, "from", "2026-09-29");
+            assertEquals(BatchStatus.COMPLETED, e.getStatus(), failures(e));
+            assertEquals("COMPLETED_WITH_WARNINGS", step(e, "retention").getExitStatus().getExitCode());
+            assertEquals(BatchStatus.COMPLETED, step(e, "kasiRiseSet").getStatus(), "later steps still run");
+            assertEquals(BatchStatus.COMPLETED, step(e, "crosscheck").getStatus());
+            assertEquals(4, count("data_pack"), "the row stays for tomorrow's retry");
+        } finally {
+            locked.setWritable(true);
+        }
+    }
+
+    @Test
     void astroDailyStoresKasiTimesAndCrossChecksAgainstAstronomyEngine() throws Exception {
         WM.stubFor(get(urlPathEqualTo("/B090041/openapi/service/RiseSetInfoService/getLCRiseSetInfo"))
                 .willReturn(aResponse().withHeader("Content-Type", "application/xml").withBody(

@@ -45,8 +45,8 @@ public class PackPublisher {
     public record Published(String version, String path, String sha256, int bytes, int rawBytes, int regions,
                             int scored, boolean newVersion, boolean live) {}
 
-    /** pg_advisory_xact_lock key for the manifest read-modify-write ("SIPK"). */
-    static final long MANIFEST_LOCK = 0x5349504BL;
+    /** pg_advisory_xact_lock key for the manifest read-modify-write ("SIPK"); retention reads the manifest under it too. */
+    public static final long MANIFEST_LOCK = 0x5349504BL;
 
     private final PackStore store;
     private final EtlRepository repo;

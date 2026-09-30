@@ -9,7 +9,10 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
  * Singleton containers shared by every integration test class (started once per JVM), so the Spring context
  * cache is reused across classes. PostgreSQL 18 = the planned RDS major; Valkey 8 = Redis-compatible store.
  */
-@SpringBootTest(properties = "spring.data.redis.repositories.enabled=false")
+@SpringBootTest(properties = {
+        "spring.data.redis.repositories.enabled=false",
+        // Never the developer's build/packs: retention (astroDailyJob) deletes pack files it has no row for.
+        "starindex.pack.local-dir=build/test-packs"})
 public abstract class IntegrationTestBase {
 
     @ServiceConnection

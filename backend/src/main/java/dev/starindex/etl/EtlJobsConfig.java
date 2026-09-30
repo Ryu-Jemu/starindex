@@ -124,11 +124,21 @@ public class EtlJobsConfig {
         }, noTx).build();
     }
 
+    /**
+     * A failed item is a warning, not a failure: exit COMPLETED_WITH_WARNINGS keeps the job COMPLETED (G6 counts
+     * consecutive successful days) while the summary and log carry the reason.
+     */
     @Bean
-    Step retentionStep(JobRepository repo, EtlRepository etlRepo, EtlProperties.Etl etl) {
+    Step retentionStep(JobRepository repo, RetentionService retention, EtlProperties.Etl etl) {
         return new StepBuilder("retention", repo).tasklet((c, ctx) -> {
-            var n = etlRepo.purge(etl.forecastRetentionDays(), etl.auditRetentionDays());
-            summary(c, "보존 기간 지난 행 삭제 " + n + " (예보 " + etl.forecastRetentionDays() + "일, 감사 " + etl.auditRetentionDays() + "일)");
+            var r = retention.purge(java.time.Instant.now());
+            String text = "보존 정리 " + r.deleted() + " (예보 " + etl.forecastRetentionDays() + "일, 이력·발행 "
+                    + etl.auditRetentionDays() + "일, 달력 지난달 1일부터, 팩 현재·최신 " + etl.packKeepMin() + "·고정 유지)";
+            if (!r.warnings().isEmpty()) {
+                text += " 경고 " + r.warnings();
+                c.setExitStatus(new ExitStatus("COMPLETED_WITH_WARNINGS", String.join("; ", r.warnings())));
+            }
+            summary(c, text);
             return RepeatStatus.FINISHED;
         }, noTx).build();
     }
@@ -216,7 +226,9 @@ public class EtlJobsConfig {
     Job astroDailyJob(JobRepository repo, Step retentionStep, JobExecutionDecider serviceKeyDecider,
                       Step kasiRiseSetStep, Step crosscheckStep, EtlJobListener l) {
         return new JobBuilder("astroDailyJob", repo).listener(l)
-                .start(retentionStep).next(serviceKeyDecider).on("NO_KEY").end()
+                .start(retentionStep).on("FAILED").fail()
+                .from(retentionStep).on("*").to(serviceKeyDecider)          // COMPLETED or COMPLETED_WITH_WARNINGS
+                .from(serviceKeyDecider).on("NO_KEY").end()
                 .from(serviceKeyDecider).on("KEY").to(kasiRiseSetStep).next(crosscheckStep)
                 .end().build();
     }
