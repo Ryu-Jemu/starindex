@@ -197,6 +197,34 @@ class EtlJobsIntegrationTest extends IntegrationTestBase {
         assertEquals(1.0, v.get(hour.toInstant()).get("SKY"));
     }
 
+    /**
+     * DB-PLAN C2: the app-facing pack must not change while the storage underneath is reshaped (V5/V6). The hash was
+     * recorded with the pre-change code (commit 269d608) for this fixed input; mixed SKY/PTY exercise every branch.
+     */
+    static final String PACK_JSON_GOLDEN_SHA256 = "e039f859c2a117b2a54f0c7b3fa1a21c98081d7e0cddb506ddbbe5261253c8b6";
+
+    @Test
+    void packJsonIsUnchangedByStorageChanges() throws Exception {
+        LocalDate night = LocalDate.of(2026, 10, 12);
+        for (var r : regions.findActive()) {
+            var rows = new java.util.ArrayList<String[]>();
+            int[] sky = {1, 1, 3, 4, 1, 3};
+            for (int block = 0; block < 6; block++)
+                rows.addAll(Fixtures.kmaHours(night.plusDays((18 + block * 10) / 24), (18 + block * 10) % 24, 10,
+                        sky[(block + (int) (r.getId() % 3)) % 6], block == 4 && r.getKmaNy() > 100 ? 1 : 0));
+            String body = Fixtures.kmaPage("20261012", "1700", r.getKmaNx(), r.getKmaNy(), rows.size(), 1, 1000, rows);
+            WM.stubFor(get(urlPathEqualTo("/1360000/VilageFcstInfoService_2.0/getVilageFcst"))
+                    .withQueryParam("nx", equalTo(Integer.toString(r.getKmaNx()))).withQueryParam("ny", equalTo(Integer.toString(r.getKmaNy())))
+                    .willReturn(aResponse().withBody(body)));
+        }
+        JobExecution e = run(forecastPipelineJob, "base", "202610121700", "nightDate", "2026-10-12");
+        assertEquals(BatchStatus.COMPLETED, e.getStatus(), failures(e));
+        String json = PackPublisher.gunzipToString(packStore.get(manifestField("/packs/index/path")).orElseThrow());
+        assertTrue(json.contains("\"tmp\":[null,null,null,null,null,null,14.0,"), "slots before 18:00 are null; TMP keeps one decimal");
+        assertTrue(json.contains("1.8"), "WSD 1.8 printed exactly");
+        assertEquals(PACK_JSON_GOLDEN_SHA256, PackWriter.sha256(json.getBytes(StandardCharsets.UTF_8)), json.substring(0, 400));
+    }
+
     @Test
     void cloudyForecastLowersTheIndex() throws Exception {
         LocalDate night = LocalDate.of(2026, 10, 12);
