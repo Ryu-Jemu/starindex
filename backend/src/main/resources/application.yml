@@ -1,9 +1,12 @@
 spring:
   application:
     name: starindex
+  config:
+    # Local secrets: backend/.env (or the repo-root .env), KEY=VALUE lines, never committed (.gitignore).
+    import: "optional:file:.env[.properties],optional:file:../.env[.properties]"
   datasource:
-    url: jdbc:mysql://127.0.0.1:3306/starindex?serverTimezone=Asia/Seoul&characterEncoding=utf8
-    username: starindex
+    url: ${DB_URL:jdbc:postgresql://127.0.0.1:5432/starindex}
+    username: ${DB_USERNAME:starindex}
     password: ${DB_PASSWORD:starindex-local}
     hikari:
       maximum-pool-size: 10
@@ -11,17 +14,19 @@ spring:
     open-in-view: false
     hibernate:
       ddl-auto: validate
+    properties:
+      hibernate.jdbc.time_zone: UTC
   flyway:
     enabled: true
   batch:
     jdbc:
       initialize-schema: never   # Flyway owns BATCH_* (V1)
     job:
-      enabled: false             # jobs are started by the scheduler / admin API, not at boot
+      enabled: false             # jobs are started by the scheduler / CLI (scripts/etl.sh), not at boot
   data:
     redis:
-      host: 127.0.0.1
-      port: 6379
+      host: ${REDIS_HOST:127.0.0.1}
+      port: ${REDIS_PORT:6379}
 
 server:
   port: 8080
@@ -40,3 +45,25 @@ management:
   endpoint:
     health:
       show-details: never
+
+starindex:
+  data-go-kr:
+    # The ONE value to fill in: the data.go.kr "일반 인증키 (Decoding)" in .env as DATA_GO_KR_SERVICE_KEY=...
+    # Empty → key-dependent steps stop with a clear message; key-free steps (Astronomy Engine) still run.
+    service-key: ${DATA_GO_KR_SERVICE_KEY:}
+    base-url: https://apis.data.go.kr
+    connect-timeout: 5s
+    read-timeout: 20s
+    min-interval: 60ms          # ≤ ~16 calls/s, well under the 30 tps gateway limit
+    daily-quota: 10000          # development account, per API
+    quota-warn-ratio: 0.7
+    quota-stop-ratio: 0.9
+  etl:
+    kma-availability-delay: 15m # issues are served from HH:10 (활용가이드); 5 min margin
+    forecast-min-completeness: 0.9
+    astro-days-ahead: 3
+    schedule:
+      enabled: ${ETL_SCHEDULE_ENABLED:false}
+  pack:
+    local-dir: ${PACK_LOCAL_DIR:build/packs}
+    hourly-slots: 72

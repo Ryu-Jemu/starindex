@@ -1,20 +1,19 @@
-# Local development (M0-W1/W2): MySQL 8.4 (same major as RDS) + Valkey 8 (Redis-compatible, ADR-005).
+# Local development: PostgreSQL 18 (same major as the planned RDS instance, ADR-013) + Valkey 8 (Redis-compatible, ADR-005).
 # Usage: docker compose -f backend/docker-compose.yml up -d
 services:
-  mysql:
-    image: mysql:8.4
-    container_name: starindex-mysql
+  postgres:
+    image: postgres:18
+    container_name: starindex-postgres
     environment:
-      MYSQL_DATABASE: starindex
-      MYSQL_USER: starindex
-      MYSQL_PASSWORD: starindex-local
-      MYSQL_ROOT_PASSWORD: root-local
+      POSTGRES_DB: starindex
+      POSTGRES_USER: starindex
+      POSTGRES_PASSWORD: starindex-local
       TZ: Asia/Seoul
-    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_0900_ai_ci"]
-    ports: ["127.0.0.1:3306:3306"]
-    volumes: ["mysql-data:/var/lib/mysql"]
+    ports: ["127.0.0.1:5432:5432"]
+    # postgres:18 keeps PGDATA under /var/lib/postgresql/18/docker; mount the parent (changed from 17 and earlier).
+    volumes: ["postgres-data:/var/lib/postgresql"]
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-proot-local"]
+      test: ["CMD-SHELL", "pg_isready -U starindex -d starindex"]
       interval: 5s
       retries: 20
 
@@ -29,4 +28,4 @@ services:
       retries: 20
 
 volumes:
-  mysql-data:
+  postgres-data:
