@@ -62,6 +62,8 @@ starindex:
     kma-availability-delay: 15m # issues are served from HH:10 (활용가이드); 5 min margin
     forecast-min-completeness: 0.9
     astro-days-ahead: 3
+    forecast-retention-days: 14 # only the latest issue near tonight is read; raw copies go to S3 in W3
+    audit-retention-days: 90
     schedule:
       enabled: ${ETL_SCHEDULE_ENABLED:false}
   pack:

@@ -24,6 +24,7 @@ import java.util.regex.Pattern;
  */
 @Component
 public class KasiClient {
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(KasiClient.class);
     private static final DateTimeFormatter DATE = DateTimeFormatter.BASIC_ISO_DATE;
     private static final Pattern CLOCK = Pattern.compile("^(\\d{1,2}):(\\d{2})$");
 
@@ -61,10 +62,15 @@ public class KasiClient {
                 String.format(Locale.ROOT, "%.2f,%.2f@%s", lat, lon, date));
         if (body.items().isEmpty()) return Optional.empty();
         Map<String, String> r = body.items().getFirst();
-        double rLat = decimal(r.get("latitudeNum"), lat), rLon = decimal(r.get("longitudeNum"), lon);
-        if (Math.abs(rLat - lat) > 1 || Math.abs(rLon - lon) > 1)
+        Double rLat = returned(r.get("latitudeNum"), r.get("latitude")), rLon = returned(r.get("longitudeNum"), r.get("longitude"));
+        if (rLat == null || rLon == null) {
+            log.warn("KASI rise/set for {},{} has no usable returned coordinates; location not verified", lat, lon);
+            rLat = lat;
+            rLon = lon;
+        } else if (Math.abs(rLat - lat) > 1 || Math.abs(rLon - lon) > 1) {
             throw new DataGoKrException(ApiSource.KASI_RISESET, DataGoKrException.Kind.PARSE, null, 200,
                     "KASI returned a location " + rLat + "," + rLon + " far from the request (dnYn mismatch?)");
+        }
         return Optional.of(new RiseSetDay(parseDate(r.get("locdate"), date), strip(r.get("location")), rLat, rLon,
                 time(r.get("sunrise")), time(r.get("suntransit")), time(r.get("sunset")),
                 time(r.get("moonrise")), time(r.get("moontransit")), time(r.get("moonset")),
@@ -170,12 +176,28 @@ public class KasiClient {
         }
     }
 
-    private static double decimal(String s, double fallback) {
+    /**
+     * The coordinate KASI answered with: the decimal {@code *Num} field, cross-checked against the degree-minute field
+     * ({@code 3733} = 37°33′, {@code 12658} = 126°58′). The guide's own sample copies the latitude into longitudeNum, so
+     * when both exist and disagree by more than 0.1° the degree-minute value wins. Null when neither parses.
+     */
+    public static Double returned(String numField, String ddmmField) {
+        Double num = null, ddmm = null;
         try {
-            return s == null ? fallback : Double.parseDouble(s.strip());
-        } catch (NumberFormatException e) {
-            return fallback;
+            if (numField != null && !numField.isBlank()) num = Double.parseDouble(numField.strip());
+        } catch (NumberFormatException ignored) {
+            // fall through to the degree-minute field
         }
+        try {
+            if (ddmmField != null && ddmmField.strip().matches("\\d{4,5}")) {
+                int v = Integer.parseInt(ddmmField.strip());
+                ddmm = v / 100 + (v % 100) / 60.0;
+            }
+        } catch (NumberFormatException ignored) {
+            // no degree-minute value
+        }
+        if (num != null && ddmm != null && Math.abs(num - ddmm) > 0.1) return ddmm;
+        return num != null ? num : ddmm;
     }
 
     private static int intOr(String s, int fallback) {

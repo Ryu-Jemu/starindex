@@ -9,8 +9,11 @@ public final class EtlProperties {
     private EtlProperties() {}
 
     @ConfigurationProperties("starindex.etl")
-    public record Etl(Duration kmaAvailabilityDelay, double forecastMinCompleteness, int astroDaysAhead, Schedule schedule) {
+    public record Etl(Duration kmaAvailabilityDelay, double forecastMinCompleteness, int astroDaysAhead,
+                      int forecastRetentionDays, int auditRetentionDays, Schedule schedule) {
         public Etl {
+            if (forecastRetentionDays <= 0) forecastRetentionDays = 14;
+            if (auditRetentionDays <= 0) auditRetentionDays = 90;
             if (kmaAvailabilityDelay == null) kmaAvailabilityDelay = Duration.ofMinutes(15);
             if (forecastMinCompleteness <= 0) forecastMinCompleteness = 0.9;
             if (astroDaysAhead < 0) astroDaysAhead = 3;

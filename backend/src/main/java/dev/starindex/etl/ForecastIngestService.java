@@ -68,13 +68,9 @@ public class ForecastIngestService {
                 rows += n == null ? 0 : n;
                 ok++;
             } catch (DataGoKrException e) {
-                switch (e.kind()) {
-                    case KEY_MISSING, KEY_REJECTED, QUOTA -> throw new EtlStopException(e.guidance(), e);
-                    default -> {
-                        log.warn("forecast {} {} failed: {}", c, base, e.guidance());
-                        failures.add(c.nx() + "," + c.ny() + " " + e.kind() + (e.code() == null ? "" : " " + e.code()));
-                    }
-                }
+                if (e.kind().stopsRun()) throw new EtlStopException(e.guidance(), e);
+                log.warn("forecast {} {} failed: {}", c, base, e.guidance());
+                failures.add(c.nx() + "," + c.ny() + " " + e.kind() + (e.code() == null ? "" : " " + e.code()));
             }
         }
         return new Report(base, cells.size(), ok, rows, failures);

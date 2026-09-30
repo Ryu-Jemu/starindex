@@ -111,9 +111,33 @@ class DataGoKrClientTest {
         assertEquals(DataGoKrException.Kind.IO, e.kind());
         assertEquals(3, wm.getAllServeEvents().size(), "1 try + 2 retries");
         wm.resetAll();
-        wm.stubFor(get(anyUrl()).willReturn(aResponse().withStatus(200).withBody(Fixtures.provider("10", "INVALID_REQUEST_PARAMETER_ERROR"))));
+        wm.stubFor(get(anyUrl()).willReturn(aResponse().withStatus(200).withBody(Fixtures.provider("99", "UNKNOWN_ERROR"))));
         assertEquals(DataGoKrException.Kind.PROVIDER,
                 assertThrows(DataGoKrException.class, () -> client(KEY).get(ApiSource.KMA_VILAGE, "x", Map.of(), "t")).kind());
+        assertEquals(3, wm.getAllServeEvents().size(), "transient provider errors are retried");
+    }
+
+    @Test
+    void perSecondLimitIsRetriedButMalformedRequestsAreNot() {
+        wm.stubFor(get(anyUrl()).willReturn(aResponse().withStatus(429).withBody(Fixtures.GATEWAY_23_XML)));
+        var rate = assertThrows(DataGoKrException.class, () -> client(KEY).get(ApiSource.KMA_VILAGE, "x", Map.of(), "t"));
+        assertEquals(DataGoKrException.Kind.RATE_LIMITED, rate.kind());
+        assertFalse(rate.kind().stopsRun());
+        assertEquals(3, wm.getAllServeEvents().size(), "23 is transient: retried");
+        wm.resetAll();
+        wm.stubFor(get(anyUrl()).willReturn(aResponse().withStatus(200).withBody(Fixtures.provider("10", "INVALID_REQUEST_PARAMETER_ERROR"))));
+        var bad = assertThrows(DataGoKrException.class, () -> client(KEY).get(ApiSource.KMA_VILAGE, "x", Map.of(), "t"));
+        assertEquals(DataGoKrException.Kind.REQUEST, bad.kind());
+        assertTrue(bad.kind().stopsRun());
+        assertEquals(1, wm.getAllServeEvents().size(), "10 repeats for every call: not retried");
+    }
+
+    @Test
+    void kasiReturnedCoordinatePrefersDegreeMinuteWhenNumDisagrees() {
+        assertEquals(37.55, KasiClient.returned("37.5500000", "3733"), 1e-9);
+        assertEquals(126 + 58 / 60.0, KasiClient.returned("37.5500000", "12658"), 1e-9, "guide sample copies latitude into longitudeNum");
+        assertEquals(36 + 13 / 60.0, KasiClient.returned(null, "3613"), 1e-9);
+        assertNull(KasiClient.returned(" ", "x"));
     }
 
     @Test

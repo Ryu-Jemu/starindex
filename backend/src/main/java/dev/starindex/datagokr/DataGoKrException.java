@@ -8,18 +8,25 @@ public class DataGoKrException extends RuntimeException {
         KEY_MISSING,
         /** Gateway refused the key: not registered/approved for this API yet, expired, IP or signature (20, 21, 30–33). */
         KEY_REJECTED,
-        /** Daily or per-second quota (22, 23), or our own quota guard. */
+        /** Daily quota (22) or our own daily quota guard: retrying today is pointless. */
         QUOTA,
-        /** Provider-level error inside response.header (01, 02, 04, 05, 10, 11, 99 …). */
+        /** Per-second limit (23): transient, retried with backoff. */
+        RATE_LIMITED,
+        /** Request rejected as malformed (10, 11, 12): deterministic, repeats for every call → stop, do not retry. */
+        REQUEST,
+        /** Transient provider-level error inside response.header (01, 02, 04, 05, 99 …): retried. */
         PROVIDER,
-        /** Other gateway refusals (12 no such service, 29 blacklisted IP …). */
+        /** Other gateway refusals (29 blacklisted IP …). */
         GATEWAY,
         /** Network, timeout or HTTP without a recognisable body. */
         IO,
         /** Body is neither a data.go.kr response nor a gateway error. */
         PARSE;
 
-        public boolean retryable() { return this == IO || this == PROVIDER; }
+        public boolean retryable() { return this == IO || this == PROVIDER || this == RATE_LIMITED; }
+
+        /** Errors that every other call of the run would hit too: the job stops instead of trying each cell. */
+        public boolean stopsRun() { return this == KEY_MISSING || this == KEY_REJECTED || this == QUOTA || this == REQUEST; }
     }
 
     private final ApiSource source;
@@ -51,7 +58,9 @@ public class DataGoKrException extends RuntimeException {
             case KEY_MISSING -> "인증키가 없습니다. backend/.env에 DATA_GO_KR_SERVICE_KEY=<일반 인증키(Decoding)>를 넣으세요.";
             case KEY_REJECTED -> api + ": 키가 거부됐습니다(" + code + " " + getMessage() + "). 이 API의 활용신청 승인 여부를 확인하세요. "
                     + "승인 직후에는 키 활성화까지 1~2시간 걸릴 수 있고, Encoding 키를 넣었다면 Decoding 키로 바꾸세요.";
-            case QUOTA -> api + ": 호출 한도에 걸렸습니다(" + code + "). 내일 다시 실행하거나 운영계정 트래픽 증가를 신청하세요.";
+            case QUOTA -> api + ": 일일 호출 한도에 걸렸습니다(" + code + "). 내일 다시 실행하거나 운영계정 트래픽 증가를 신청하세요.";
+            case RATE_LIMITED -> api + ": 초당 호출 한도(" + code + ")에 걸려 재시도했지만 실패했습니다. 다른 실행과 겹치지 않게 잠시 후 다시 실행하세요.";
+            case REQUEST -> api + ": 요청 형식 오류(" + code + " " + getMessage() + "). 파라미터나 API 사양 변경을 확인하세요(코드 문제).";
             case PROVIDER -> api + ": 제공기관 오류(" + code + " " + getMessage() + ").";
             case GATEWAY -> api + ": 게이트웨이 오류(" + code + " " + getMessage() + ").";
             case IO -> api + ": 통신 오류(" + getMessage() + ").";

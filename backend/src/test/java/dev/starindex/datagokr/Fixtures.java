@@ -38,6 +38,12 @@ public final class Fixtures {
             <returnAuthMsg>일일 호출 허용량 초과</returnAuthMsg><returnReasonCode>22</returnReasonCode></cmmMsgHeader>
             </OpenAPI_ServiceResponse>""";
 
+    public static final String GATEWAY_23_XML = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <OpenAPI_ServiceResponse><cmmMsgHeader><errMsg>LIMITED_NUMBER_OF_SERVICE_REQUESTS_PER_SECOND_EXCEEDS_ERROR</errMsg>
+            <returnAuthMsg>초당 호출 허용량 초과</returnAuthMsg><returnReasonCode>23</returnReasonCode></cmmMsgHeader>
+            </OpenAPI_ServiceResponse>""";
+
     public static String provider(String code, String msg) {
         return "<?xml version=\"1.0\" encoding=\"UTF-8\"?><response><header><resultCode>" + code + "</resultCode><resultMsg>"
                 + msg + "</resultMsg></header></response>";
@@ -76,10 +82,23 @@ public final class Fixtures {
         return out;
     }
 
+    /** Decimal coordinates plus the matching degree-minute fields (DDMM / DDDMM), as live responses carry both. */
     public static String riseSet(String locdate, String location, String lat, String lon) {
+        return riseSet(locdate, location, lat, lon, ddmm(lat), ddmm(lon));
+    }
+
+    /** {@code latDdmm}/{@code lonDdmm} null → element omitted (e.g. when lat/lon are WireMock templates). */
+    public static String riseSet(String locdate, String location, String lat, String lon, String latDdmm, String lonDdmm) {
+        String dm = (latDdmm == null ? "" : "<latitude>" + latDdmm + "</latitude>") + (lonDdmm == null ? "" : "<longitude>" + lonDdmm + "</longitude>");
         return """
-                <?xml version="1.0" encoding="UTF-8" standalone="yes"?><response><header><resultCode>00</resultCode><resultMsg>NORMAL SERVICE.</resultMsg></header><body><items><item><aste>1943  </aste><astm>0436  </astm><civile>1845  </civile><civilm>0559  </civilm><latitude>3733</latitude><latitudeNum>%s</latitudeNum><location>%s</location><locdate>%s</locdate><longitude>12658</longitude><longitudeNum>%s</longitudeNum><moonrise>1925  </moonrise><moonset>0904  </moonset><moontransit>------</moontransit><naute>1914  </naute><nautm>0530  </nautm><sunrise>0625  </sunrise><sunset>1819  </sunset><suntransit>122245</suntransit></item></items><numOfRows>10</numOfRows><pageNo>1</pageNo><totalCount>1</totalCount></body></response>"""
-                .formatted(lat, location, locdate, lon);
+                <?xml version="1.0" encoding="UTF-8" standalone="yes"?><response><header><resultCode>00</resultCode><resultMsg>NORMAL SERVICE.</resultMsg></header><body><items><item><aste>1943  </aste><astm>0436  </astm><civile>1845  </civile><civilm>0559  </civilm>%s<latitudeNum>%s</latitudeNum><location>%s</location><locdate>%s</locdate><longitudeNum>%s</longitudeNum><moonrise>1925  </moonrise><moonset>0904  </moonset><moontransit>------</moontransit><naute>1914  </naute><nautm>0530  </nautm><sunrise>0625  </sunrise><sunset>1819  </sunset><suntransit>122245</suntransit></item></items><numOfRows>10</numOfRows><pageNo>1</pageNo><totalCount>1</totalCount></body></response>"""
+                .formatted(dm, lat, location, locdate, lon);
+    }
+
+    static String ddmm(String decimal) {
+        double v = Double.parseDouble(decimal);
+        int deg = (int) v, min = (int) Math.round((v - deg) * 60);
+        return String.format("%d%02d", deg, min);
     }
 
     /** The official sample's quirks: time inside astroTitle, a YYYYMM monthly feature item. */

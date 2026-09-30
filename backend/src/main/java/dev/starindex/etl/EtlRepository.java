@@ -69,7 +69,7 @@ public class EtlRepository {
                 SELECT DISTINCT ON (fcst_at, category) fcst_at, category, value_num
                 FROM kma_forecast
                 WHERE nx = ? AND ny = ? AND fcst_at >= ? AND fcst_at < ? AND category IN (%s)
-                ORDER BY fcst_at, category, base_at DESC""".formatted(in),
+                ORDER BY fcst_at, category, (value_num IS NULL), base_at DESC""".formatted(in),
                 rs -> {
                     Instant at = rs.getObject("fcst_at", OffsetDateTime.class).toInstant();
                     double v = rs.getDouble("value_num");
@@ -77,6 +77,19 @@ public class EtlRepository {
                     out.computeIfAbsent(at, k -> new HashMap<>()).put(rs.getString("category"), value);
                 }, nx, ny, ts(from), ts(to));
         return out;
+    }
+
+    /**
+     * Retention: forecasts older than {@code forecastDays} (only the latest issue near the current night is ever read)
+     * and call audit rows older than {@code auditDays}. @return rows deleted per table
+     */
+    public Map<String, Integer> purge(int forecastDays, int auditDays) {
+        Map<String, Integer> n = new java.util.LinkedHashMap<>();
+        n.put("kma_forecast", jdbc.update("DELETE FROM kma_forecast WHERE base_at < now() - make_interval(days => ?)", forecastDays));
+        n.put("kma_forecast_issue", jdbc.update("DELETE FROM kma_forecast_issue WHERE base_at < now() - make_interval(days => ?)", forecastDays));
+        n.put("etl_api_call", jdbc.update("DELETE FROM etl_api_call WHERE called_at < now() - make_interval(days => ?)", auditDays));
+        n.put("star_index_hourly", jdbc.update("DELETE FROM star_index_hourly WHERE night_date < current_date - ?", auditDays));
+        return n;
     }
 
     public Optional<Instant> latestBaseAt(int nx, int ny) {

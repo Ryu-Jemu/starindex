@@ -49,11 +49,25 @@ class EtlWithoutKeyTest extends IntegrationTestBase {
     }
 
     @Test
+    void dailyRetentionDropsOldForecastsAndAudit() throws Exception {
+        jdbc.execute("TRUNCATE kma_forecast, kma_forecast_issue");
+        jdbc.update("""
+                INSERT INTO kma_forecast (nx, ny, base_at, fcst_at, category, value_text, value_num) VALUES
+                (60, 127, now() - interval '30 days', now() - interval '29 days', 'SKY', '1', 1),
+                (60, 127, now() - interval '1 day', now(), 'SKY', '3', 3)""");
+        jdbc.update("INSERT INTO etl_api_call (source, operation, request_key, duration_ms, outcome, called_at) "
+                + "VALUES ('KMA_VILAGE', 'getVilageFcst', 'old', 1, 'OK', now() - interval '200 days')");
+        assertEquals(BatchStatus.COMPLETED, run(astroDailyJob).getStatus());
+        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM kma_forecast", Integer.class));
+        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM etl_api_call", Integer.class));
+    }
+
+    @Test
     void astroDailyStillComputesWithoutKey() throws Exception {
         JobExecution e = run(astroDailyJob, "from", "2026-10-12");
         assertEquals(BatchStatus.COMPLETED, e.getStatus());
         assertEquals(17 * 4, jdbc.queryForObject("SELECT COUNT(*) FROM astro_night", Integer.class));
         assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM kasi_riseset", Integer.class));
-        assertEquals(1, e.getStepExecutions().size(), "decider ends the job after astroCompute");
+        assertEquals(2, e.getStepExecutions().size(), "retention + astroCompute, then the decider ends the job");
     }
 }

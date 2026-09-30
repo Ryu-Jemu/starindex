@@ -28,7 +28,7 @@ import java.util.Set;
 public class DataGoKrClient {
     private static final Logger log = LoggerFactory.getLogger(DataGoKrClient.class);
     private static final Set<String> KEY_CODES = Set.of("20", "21", "30", "31", "32", "33");
-    private static final Set<String> QUOTA_CODES = Set.of("22", "23");
+    private static final Set<String> REQUEST_CODES = Set.of("10", "11", "12");
     private static final long[] BACKOFF_MS = {1000, 3000};
 
     private final DataGoKrProperties props;
@@ -91,14 +91,12 @@ public class DataGoKrClient {
                 throw fail(source, operation, requestKey, t0, status, null, e.getMessage(), kind, "HTTP " + raw.status(), e);
             }
             if (parsed instanceof DataGoKrXml.GatewayError g) {
-                Kind kind = KEY_CODES.contains(g.code()) ? Kind.KEY_REJECTED
-                        : QUOTA_CODES.contains(g.code()) ? Kind.QUOTA : Kind.GATEWAY;
+                Kind kind = classify(g.code(), Kind.GATEWAY);
                 throw fail(source, operation, requestKey, t0, status, g.code(), g.errMsg(), kind, g.errMsg(), null);
             }
             DataGoKrXml.Body body = (DataGoKrXml.Body) parsed;
             if (!body.ok() && !body.noData()) {
-                Kind kind = "22".equals(body.resultCode()) ? Kind.QUOTA
-                        : KEY_CODES.contains(body.resultCode()) ? Kind.KEY_REJECTED : Kind.PROVIDER;
+                Kind kind = classify(body.resultCode(), Kind.PROVIDER);
                 throw fail(source, operation, requestKey, t0, status, body.resultCode(), body.resultMsg(), kind, body.resultMsg(), null);
             }
             record(source, operation, requestKey, t0, status, body.resultCode(), body.resultMsg(), body.items().size(),
@@ -110,6 +108,16 @@ public class DataGoKrClient {
             throw fail(source, operation, requestKey, t0, status, null, e.getClass().getSimpleName(), Kind.IO,
                     e.getClass().getSimpleName() + ": " + e.getMessage(), e);
         }
+    }
+
+    /** Same code table for gateway (cmmMsgHeader) and provider (response.header) errors. */
+    static Kind classify(String code, Kind otherwise) {
+        if (code == null) return otherwise;
+        if (KEY_CODES.contains(code)) return Kind.KEY_REJECTED;
+        if ("22".equals(code)) return Kind.QUOTA;
+        if ("23".equals(code)) return Kind.RATE_LIMITED;
+        if (REQUEST_CODES.contains(code)) return Kind.REQUEST;
+        return otherwise;
     }
 
     /** Package-visible for the encoding test. */

@@ -7,7 +7,9 @@ import dev.starindex.index.StarIndexCalculator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.nio.charset.StandardCharsets;
@@ -39,18 +41,26 @@ public class PackPublisher {
             "한국천문연구원 출몰시각·천문현상 정보",
             "Astronomy Engine v2.1.19 (MIT)");
 
+    /** {@code live}: the manifest now points at this pack (false for a backfill of an older night or issue). */
     public record Published(String version, String path, String sha256, int bytes, int rawBytes, int regions,
-                            int scored, boolean newVersion) {}
+                            int scored, boolean newVersion, boolean live) {}
+
+    /** pg_advisory_xact_lock key for the manifest read-modify-write ("SIPK"). */
+    static final long MANIFEST_LOCK = 0x5349504BL;
 
     private final PackStore store;
     private final EtlRepository repo;
     private final StringRedisTemplate redis;
+    private final JdbcTemplate jdbc;
+    private final TransactionTemplate tx;
     private final JsonMapper json = JsonMapper.builder().build();
 
-    public PackPublisher(PackStore store, EtlRepository repo, StringRedisTemplate redis) {
+    public PackPublisher(PackStore store, EtlRepository repo, StringRedisTemplate redis, JdbcTemplate jdbc, TransactionTemplate tx) {
         this.store = store;
         this.repo = repo;
         this.redis = redis;
+        this.jdbc = jdbc;
+        this.tx = tx;
     }
 
     public Published publishIndex(LocalDate nightDate, List<IndexService.RegionNight> nights, int slots) {
@@ -75,16 +85,23 @@ public class PackPublisher {
         var packed = PackWriter.gzip(json.writeValueAsBytes(doc));
         String path = "packs/index/" + version + "/index.json.gz";
 
-        boolean fresh = repo.insertPack("index", version, nightDate, issuedAt, path, packed.sha256(),
-                packed.gzipBytes().length, packed.rawBytes(), regions.size());
-        if (fresh || store.get(path).isEmpty()) store.put(path, packed.gzipBytes(), "application/gzip", PackStore.IMMUTABLE);
+        // Immutable path: if this version already exists, what clients download is the STORED file; describe that one
+        // everywhere (a JDK/zlib change could compress the same JSON differently).
+        byte[] stored = store.get(path).orElse(null);
+        if (stored == null) {
+            store.put(path, packed.gzipBytes(), "application/gzip", PackStore.IMMUTABLE);
+            stored = packed.gzipBytes();
+        }
+        String sha = PackWriter.sha256(stored);
+        boolean fresh = repo.insertPack("index", version, nightDate, issuedAt, path, sha, stored.length,
+                packed.rawBytes(), regions.size());
 
         int scored = (int) nights.stream().filter(n -> n.score() != null).count();
-        writeManifest(version, path, packed, nightDate, issuedAt);
-        notifyLive(version);
-        log.info("index pack {} → {} ({} B gz, {} regions, {} scored, {})", version, store.describe(path),
-                packed.gzipBytes().length, regions.size(), scored, fresh ? "new" : "unchanged");
-        return new Published(version, path, packed.sha256(), packed.gzipBytes().length, packed.rawBytes(), regions.size(), scored, fresh);
+        boolean live = promote(version, path, sha, stored.length, nightDate, issuedAt);
+        if (live) notifyLive(version);
+        log.info("index pack {} → {} ({} B gz, {} regions, {} scored, {}, {})", version, store.describe(path),
+                stored.length, regions.size(), scored, fresh ? "new" : "unchanged", live ? "live" : "stored only (older than the live pack)");
+        return new Published(version, path, sha, stored.length, packed.rawBytes(), regions.size(), scored, fresh, live);
     }
 
     private Map<String, Object> region(IndexService.RegionNight n, int slots) {
@@ -138,31 +155,56 @@ public class PackPublisher {
         return t;
     }
 
-    private void writeManifest(String version, String path, PackWriter.Packed packed, LocalDate nightDate, Instant issuedAt) {
-        Map<String, Object> manifest = new LinkedHashMap<>();
-        store.get(MANIFEST_PATH).ifPresent(bytes -> {
-            try {
-                @SuppressWarnings("unchecked")
-                Map<String, Object> old = json.readValue(bytes, LinkedHashMap.class);
-                manifest.putAll(old);
-            } catch (RuntimeException e) {
-                log.warn("existing manifest unreadable, rewriting: {}", e.toString());
-            }
+    /**
+     * Points the manifest at this pack unless the live pack is for a later night, or the same night from a later
+     * issue: a backfill ({@code publish nightDate=<past>}) must not roll every client back. The read-modify-write runs
+     * under a PostgreSQL advisory lock, so the scheduler and a CLI run cannot interleave.
+     */
+    private boolean promote(String version, String path, String sha, int bytes, LocalDate nightDate, Instant issuedAt) {
+        Boolean promoted = tx.execute(status -> {
+            jdbc.queryForObject("SELECT pg_advisory_xact_lock(?)", Object.class, MANIFEST_LOCK);
+            Map<String, Object> manifest = new LinkedHashMap<>();
+            store.get(MANIFEST_PATH).ifPresent(b -> {
+                try {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> old = json.readValue(b, LinkedHashMap.class);
+                    manifest.putAll(old);
+                } catch (RuntimeException e) {
+                    log.warn("existing manifest unreadable, rewriting: {}", e.toString());
+                }
+            });
+            @SuppressWarnings("unchecked")
+            Map<String, Object> packs = manifest.get("packs") instanceof Map<?, ?> p ? new LinkedHashMap<>((Map<String, Object>) p) : new LinkedHashMap<>();
+            if (packs.get("index") instanceof Map<?, ?> current && isNewer(current, nightDate, issuedAt)) return false;
+            Map<String, Object> entry = new LinkedHashMap<>();
+            entry.put("version", version);
+            entry.put("path", path);
+            entry.put("sha256", sha);
+            entry.put("bytes", bytes);
+            entry.put("nightDate", nightDate.toString());
+            entry.put("issuedAt", issuedAt == null ? null : kst(issuedAt));
+            packs.put("index", entry);
+            manifest.put("schema", 1);
+            manifest.put("generatedAt", kst(Instant.now().truncatedTo(ChronoUnit.SECONDS)));
+            manifest.put("packs", packs);
+            store.put(MANIFEST_PATH, json.writeValueAsBytes(manifest), "application/json", PackStore.MANIFEST);
+            return true;
         });
-        @SuppressWarnings("unchecked")
-        Map<String, Object> packs = manifest.get("packs") instanceof Map<?, ?> p ? new LinkedHashMap<>((Map<String, Object>) p) : new LinkedHashMap<>();
-        Map<String, Object> entry = new LinkedHashMap<>();
-        entry.put("version", version);
-        entry.put("path", path);
-        entry.put("sha256", packed.sha256());
-        entry.put("bytes", packed.gzipBytes().length);
-        entry.put("nightDate", nightDate.toString());
-        entry.put("issuedAt", issuedAt == null ? null : kst(issuedAt));
-        packs.put("index", entry);
-        manifest.put("schema", 1);
-        manifest.put("generatedAt", kst(Instant.now().truncatedTo(ChronoUnit.SECONDS)));
-        manifest.put("packs", packs);
-        store.put(MANIFEST_PATH, json.writeValueAsBytes(manifest), "application/json", PackStore.MANIFEST);
+        return Boolean.TRUE.equals(promoted);
+    }
+
+    /** True when the live entry is for a later night, or the same night issued later than {@code issuedAt}. */
+    static boolean isNewer(Map<?, ?> current, LocalDate nightDate, Instant issuedAt) {
+        try {
+            LocalDate liveNight = LocalDate.parse(String.valueOf(current.get("nightDate")));
+            if (liveNight.isAfter(nightDate)) return true;
+            if (liveNight.isBefore(nightDate)) return false;
+            Object liveIssued = current.get("issuedAt");
+            if (liveIssued == null || issuedAt == null) return false;
+            return OffsetDateTime.parse(liveIssued.toString()).toInstant().isAfter(issuedAt);
+        } catch (RuntimeException e) {
+            return false;   // unreadable entry: replace it
+        }
     }
 
     private void notifyLive(String version) {

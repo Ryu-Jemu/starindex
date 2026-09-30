@@ -83,8 +83,7 @@ public class AstroService {
                     repo.upsertRiseSet(r.getId(), day.get());
                     stored++;
                 } catch (DataGoKrException e) {
-                    if (e.kind() == DataGoKrException.Kind.KEY_MISSING || e.kind() == DataGoKrException.Kind.KEY_REJECTED
-                            || e.kind() == DataGoKrException.Kind.QUOTA) throw new EtlStopException(e.guidance(), e);
+                    if (e.kind().stopsRun()) throw new EtlStopException(e.guidance(), e);
                     failures.add(r.getNameKo() + " " + date + " " + e.kind());
                 }
             }

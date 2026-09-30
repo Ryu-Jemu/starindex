@@ -66,8 +66,12 @@ class EtlJobsIntegrationTest extends IntegrationTestBase {
     @Autowired @Qualifier("apiKeyCheckJob") Job apiKeyCheckJob;
 
     @BeforeEach
-    void clean() {
+    void clean() throws java.io.IOException {
         WM.resetAll();
+        // Packs and the manifest are shared state across tests: start every test from an empty store.
+        try (var paths = Files.walk(PACKS)) {
+            paths.sorted(java.util.Comparator.reverseOrder()).filter(p -> !p.equals(PACKS)).forEach(p -> p.toFile().delete());
+        }
         jdbc.execute("TRUNCATE etl_api_call, kma_forecast, kma_forecast_issue, kasi_riseset, astro_night, astro_crosscheck, "
                 + "kasi_astro_event, kasi_special_day, kasi_lunar_day, star_index_hourly, star_index_nightly, data_pack");
     }
@@ -138,6 +142,61 @@ class EtlJobsIntegrationTest extends IntegrationTestBase {
                 JsonMapper.builder().build().readTree(packStore.get(PackPublisher.MANIFEST_PATH).orElseThrow()).at("/packs/index/version").asString());
     }
 
+    @Autowired @Qualifier("starIndexPublishJob") Job starIndexPublishJob;
+    @Autowired EtlRepository etlRepository;
+
+    String manifestField(String pointer) {
+        return JsonMapper.builder().build().readTree(packStore.get(PackPublisher.MANIFEST_PATH).orElseThrow()).at(pointer).asString();
+    }
+
+    @Test
+    void backfillingAnOlderNightDoesNotRollBackTheLiveManifest() throws Exception {
+        stubForecastForAllCells("20261012", "1700", LocalDate.of(2026, 10, 12), 1, 0);
+        JobExecution tonight = run(forecastPipelineJob, "base", "202610121700", "nightDate", "2026-10-13");
+        assertEquals(BatchStatus.COMPLETED, tonight.getStatus(), failures(tonight));
+        assertEquals("2026-10-13", manifestField("/packs/index/nightDate"));
+        String liveVersion = manifestField("/packs/index/version");
+
+        JobExecution backfill = run(starIndexPublishJob, "nightDate", "2026-10-12");
+        assertEquals(BatchStatus.COMPLETED, backfill.getStatus(), failures(backfill));
+        assertEquals(2, count("data_pack"), "the older night's pack is still stored");
+        assertEquals(liveVersion, manifestField("/packs/index/version"), "manifest must not go back to 10-12");
+        assertTrue(backfill.getExecutionContext().getString("summary.indexPublish").contains("manifest 유지"));
+    }
+
+    @Test
+    void manifestDescribesTheStoredFileWhenTheVersionAlreadyExists() throws Exception {
+        stubForecastForAllCells("20261012", "1700", LocalDate.of(2026, 10, 12), 1, 0);
+        assertEquals(BatchStatus.COMPLETED, run(forecastPipelineJob, "base", "202610121700", "nightDate", "2026-10-12").getStatus());
+        String path = manifestField("/packs/index/path");
+        // Same JSON compressed differently (as after a JDK/zlib change): the immutable stored file must win.
+        byte[] json = PackPublisher.gunzipToString(packStore.get(path).orElseThrow()).getBytes(StandardCharsets.UTF_8);
+        var bos = new java.io.ByteArrayOutputStream();
+        try (var gz = new java.util.zip.GZIPOutputStream(bos) { { def.setLevel(1); } }) { gz.write(json); }
+        packStore.put(path, bos.toByteArray(), "application/gzip", PackStore.IMMUTABLE);
+        assertEquals(BatchStatus.COMPLETED, run(starIndexPublishJob, "nightDate", "2026-10-12").getStatus());
+        assertEquals(PackWriter.sha256(packStore.get(path).orElseThrow()), manifestField("/packs/index/sha256"));
+    }
+
+    @Test
+    void malformedParametersStopWithTheExpectedFormat() throws Exception {
+        JobExecution e = run(forecastIngestJob, "base", "2026101217");
+        assertEquals(BatchStatus.FAILED, e.getStatus());
+        assertTrue(failures(e).contains("base=2026101217 형식이 틀렸습니다"), failures(e));
+        assertEquals(0, WM.getAllServeEvents().size());
+    }
+
+    @Test
+    void aMissingNewestValueFallsBackToTheOlderIssue() {
+        var hour = java.time.OffsetDateTime.parse("2026-10-12T21:00:00+09:00");
+        jdbc.update("""
+                INSERT INTO kma_forecast (nx, ny, base_at, fcst_at, category, value_text, value_num) VALUES
+                (60, 127, '2026-10-12T14:00:00+09:00', ?, 'SKY', '1', 1),
+                (60, 127, '2026-10-12T17:00:00+09:00', ?, 'SKY', '-999', NULL)""", hour, hour);
+        var v = etlRepository.latestForecast(60, 127, hour.toInstant(), hour.toInstant().plusSeconds(3600), java.util.List.of("SKY"));
+        assertEquals(1.0, v.get(hour.toInstant()).get("SKY"));
+    }
+
     @Test
     void cloudyForecastLowersTheIndex() throws Exception {
         LocalDate night = LocalDate.of(2026, 10, 12);
@@ -175,7 +234,7 @@ class EtlJobsIntegrationTest extends IntegrationTestBase {
     void astroDailyStoresKasiTimesAndCrossChecksAgainstAstronomyEngine() throws Exception {
         WM.stubFor(get(urlPathEqualTo("/B090041/openapi/service/RiseSetInfoService/getLCRiseSetInfo"))
                 .willReturn(aResponse().withHeader("Content-Type", "application/xml").withBody(
-                        Fixtures.riseSet("{{request.query.locdate}}", "테스트", "{{request.query.latitude}}", "{{request.query.longitude}}"))));
+                        Fixtures.riseSet("{{request.query.locdate}}", "테스트", "{{request.query.latitude}}", "{{request.query.longitude}}", null, null))));
         JobExecution e = run(astroDailyJob, "from", "2026-09-29");
         assertEquals(BatchStatus.COMPLETED, e.getStatus(), failures(e));
         assertEquals(17 * 4, count("astro_night"));

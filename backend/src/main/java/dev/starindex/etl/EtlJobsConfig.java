@@ -41,7 +41,7 @@ import java.util.stream.Collectors;
  * forecastIngestJob    serviceKeyRequired → forecastFetch
  * starIndexPublishJob  indexPublish
  * forecastPipelineJob  serviceKeyRequired → forecastFetch → indexPublish      (scheduler, after every issue)
- * astroDailyJob        astroCompute → [key?] → kasiRiseSet → crosscheck        (no key: Astronomy Engine only)
+ * astroDailyJob        retention → astroCompute → [key?] → kasiRiseSet → crosscheck (no key: Astronomy Engine only)
  * astroEventsJob       serviceKeyRequired → astroEvents → specialDays? → lunar? (? = skipped if not approved)
  * apiKeyCheckJob       serviceKeyRequired → apiKeyCheck                         (one call per API)
  * </pre>
@@ -86,7 +86,11 @@ public class EtlJobsConfig {
             String b = p.getString("base");
             KmaBaseTime base = b == null || b.isBlank()
                     ? KmaBaseTime.latestAvailable(ZonedDateTime.now(AstroCalculator.KST), etl.kmaAvailabilityDelay())
-                    : KmaBaseTime.parse(b.substring(0, 8), b.substring(8, 12));
+                    : parse("base", b, "202610121700 (yyyyMMddHHmm, 시각은 02·05·08·11·14·17·20·23시)",
+                            v -> {
+                                if (!v.matches("\\d{12}")) throw new IllegalArgumentException("12 digits");
+                                return KmaBaseTime.parse(v.substring(0, 8), v.substring(8, 12));
+                            });
             var report = ingest.ingest(base);
             c.getStepExecution().getJobExecution().getExecutionContext().putString("forecast.base", base.dateParam() + base.timeParam());
             summary(c, report.summary());
@@ -101,7 +105,8 @@ public class EtlJobsConfig {
     Step indexPublishStep(JobRepository repo, IndexService index, PackPublisher publisher, EtlProperties.Pack pack) {
         return new StepBuilder("indexPublish", repo).tasklet((c, ctx) -> {
             String nd = c.getStepExecution().getJobParameters().getString("nightDate");
-            LocalDate nightDate = nd == null || nd.isBlank() ? IndexService.nightDateOf(ZonedDateTime.now(AstroCalculator.KST)) : LocalDate.parse(nd);
+            LocalDate nightDate = nd == null || nd.isBlank() ? IndexService.nightDateOf(ZonedDateTime.now(AstroCalculator.KST))
+                    : parse("nightDate", nd, "2026-10-12", LocalDate::parse);
             var nights = index.compute(nightDate, pack.hourlySlots(), 1.0);
             int scored = index.persist(nightDate, nights);
             if (scored == 0)
@@ -109,7 +114,17 @@ public class EtlJobsConfig {
                         + "forecastIngestJob을 먼저 실행하세요(예보는 발표 후 약 5일치만 있습니다).");
             var published = publisher.publishIndex(nightDate, nights, pack.hourlySlots());
             summary(c, nightDate + " 밤 지수 " + scored + "/" + nights.size() + "개 지점, 팩 " + published.version()
-                    + " (" + published.bytes() + " B gz" + (published.newVersion() ? ", 새 버전" : ", 변경 없음") + ")");
+                    + " (" + published.bytes() + " B gz" + (published.newVersion() ? ", 새 버전" : ", 변경 없음")
+                    + (published.live() ? ", manifest 갱신" : ", manifest 유지: 더 최신 밤·발표가 이미 발행됨") + ")");
+            return RepeatStatus.FINISHED;
+        }, noTx).build();
+    }
+
+    @Bean
+    Step retentionStep(JobRepository repo, EtlRepository etlRepo, EtlProperties.Etl etl) {
+        return new StepBuilder("retention", repo).tasklet((c, ctx) -> {
+            var n = etlRepo.purge(etl.forecastRetentionDays(), etl.auditRetentionDays());
+            summary(c, "보존 기간 지난 행 삭제 " + n + " (예보 " + etl.forecastRetentionDays() + "일, 감사 " + etl.auditRetentionDays() + "일)");
             return RepeatStatus.FINISHED;
         }, noTx).build();
     }
@@ -204,10 +219,10 @@ public class EtlJobsConfig {
     }
 
     @Bean
-    Job astroDailyJob(JobRepository repo, Step astroComputeStep, JobExecutionDecider serviceKeyDecider, Step kasiRiseSetStep,
-                      Step crosscheckStep, EtlJobListener l) {
+    Job astroDailyJob(JobRepository repo, Step retentionStep, Step astroComputeStep, JobExecutionDecider serviceKeyDecider,
+                      Step kasiRiseSetStep, Step crosscheckStep, EtlJobListener l) {
         return new JobBuilder("astroDailyJob", repo).listener(l)
-                .start(astroComputeStep).next(serviceKeyDecider).on("NO_KEY").end()
+                .start(retentionStep).next(astroComputeStep).next(serviceKeyDecider).on("NO_KEY").end()
                 .from(serviceKeyDecider).on("KEY").to(kasiRiseSetStep).next(crosscheckStep)
                 .end().build();
     }
@@ -252,15 +267,27 @@ public class EtlJobsConfig {
 
     private static LocalDate fromParam(StepContribution c) {
         String from = c.getStepExecution().getJobParameters().getString("from");
-        return from == null || from.isBlank() ? LocalDate.now(AstroCalculator.KST) : LocalDate.parse(from);
+        return from == null || from.isBlank() ? LocalDate.now(AstroCalculator.KST) : parse("from", from, "2026-10-12", LocalDate::parse);
     }
 
     /** The given month, or this month and the next (events are announced ahead). */
     private static List<YearMonth> months(StepContribution c) {
         String m = c.getStepExecution().getJobParameters().getString("month");
-        if (m != null && !m.isBlank()) return List.of(YearMonth.parse(m));
+        if (m != null && !m.isBlank()) {
+            YearMonth ym = parse("month", m, "2026-10", v -> YearMonth.parse(v));
+            return List.of(ym);
+        }
         YearMonth now = YearMonth.now(AstroCalculator.KST);
         return List.of(now, now.plusMonths(1));
+    }
+
+    /** Parses an operator-supplied job parameter; a bad value stops the job with the expected format. */
+    static <T> T parse(String name, String value, String example, java.util.function.Function<String, T> parser) {
+        try {
+            return parser.apply(value.strip());
+        } catch (RuntimeException e) {
+            throw new EtlStopException("파라미터 " + name + "=" + value + " 형식이 틀렸습니다. 예: " + name + "=" + example);
+        }
     }
 
     static void summary(StepContribution c, String text) {
