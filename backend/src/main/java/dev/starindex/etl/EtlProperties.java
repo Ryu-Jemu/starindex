@@ -1,0 +1,30 @@
+package dev.starindex.etl;
+
+import org.springframework.boot.context.properties.ConfigurationProperties;
+
+import java.time.Duration;
+
+/** {@code starindex.etl.*} and {@code starindex.pack.*}. */
+public final class EtlProperties {
+    private EtlProperties() {}
+
+    @ConfigurationProperties("starindex.etl")
+    public record Etl(Duration kmaAvailabilityDelay, double forecastMinCompleteness, int astroDaysAhead, Schedule schedule) {
+        public Etl {
+            if (kmaAvailabilityDelay == null) kmaAvailabilityDelay = Duration.ofMinutes(15);
+            if (forecastMinCompleteness <= 0) forecastMinCompleteness = 0.9;
+            if (astroDaysAhead < 0) astroDaysAhead = 3;
+            if (schedule == null) schedule = new Schedule(false);
+        }
+    }
+
+    public record Schedule(boolean enabled) {}
+
+    @ConfigurationProperties("starindex.pack")
+    public record Pack(String localDir, int hourlySlots) {
+        public Pack {
+            if (localDir == null || localDir.isBlank()) localDir = "build/packs";
+            if (hourlySlots <= 0) hourlySlots = 72;
+        }
+    }
+}

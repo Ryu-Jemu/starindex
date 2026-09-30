@@ -27,7 +27,7 @@ jobs:
           distribution: temurin
           java-version: "21"
       - uses: gradle/actions/setup-gradle@v6
-      - name: Backend tests (Testcontainers MySQL 8.4) + catalog builder (T9)
+      - name: Backend tests (Testcontainers PostgreSQL 18 + Valkey, WireMock) + catalog builder (T9)
         working-directory: backend
         run: ./gradlew --no-daemon test
       - name: Rebuild skypack and compare with committed artifact

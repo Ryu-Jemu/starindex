@@ -1,0 +1,82 @@
+package dev.starindex.etl;
+
+import dev.starindex.datagokr.DataGoKrException;
+import dev.starindex.etl.kma.KmaBaseTime;
+import dev.starindex.etl.kma.KmaForecastClient;
+import dev.starindex.region.Region;
+import dev.starindex.region.RegionQueryRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionTemplate;
+
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Set;
+
+/**
+ * Fetches one 단기예보 issue for every distinct grid cell of the active points. One transaction per cell. Key and quota
+ * errors stop the whole run (every other cell would fail the same way); other errors are recorded and the run goes on,
+ * then completeness decides.
+ */
+@Service
+public class ForecastIngestService {
+    private static final Logger log = LoggerFactory.getLogger(ForecastIngestService.class);
+
+    public record Report(KmaBaseTime base, int cells, int ok, int rows, List<String> failures) {
+        public double completeness() { return cells == 0 ? 0 : (double) ok / cells; }
+
+        public String summary() {
+            return "단기예보 " + base + " 발표: 격자 " + ok + "/" + cells + " 저장, " + rows + "행"
+                    + (failures.isEmpty() ? "" : ", 실패 " + failures.size() + "건 " + failures);
+        }
+    }
+
+    public record Cell(int nx, int ny) {}
+
+    private final RegionQueryRepository regions;
+    private final KmaForecastClient kma;
+    private final EtlRepository repo;
+    private final TransactionTemplate tx;
+
+    public ForecastIngestService(RegionQueryRepository regions, KmaForecastClient kma, EtlRepository repo, TransactionTemplate tx) {
+        this.regions = regions;
+        this.kma = kma;
+        this.repo = repo;
+        this.tx = tx;
+    }
+
+    public List<Cell> cells() {
+        Set<Cell> cells = new LinkedHashSet<>();
+        for (Region r : regions.findActive()) cells.add(new Cell(r.getKmaNx(), r.getKmaNy()));
+        return new ArrayList<>(cells);
+    }
+
+    public Report ingest(KmaBaseTime base) {
+        List<Cell> cells = cells();
+        int ok = 0, rows = 0;
+        List<String> failures = new ArrayList<>();
+        for (Cell c : cells) {
+            try {
+                var result = kma.fetch(c.nx(), c.ny(), base);
+                if (result.items().isEmpty()) {
+                    failures.add(c.nx() + "," + c.ny() + " NO_DATA");
+                    continue;
+                }
+                Integer n = tx.execute(s -> repo.upsertForecast(result));
+                rows += n == null ? 0 : n;
+                ok++;
+            } catch (DataGoKrException e) {
+                switch (e.kind()) {
+                    case KEY_MISSING, KEY_REJECTED, QUOTA -> throw new EtlStopException(e.guidance(), e);
+                    default -> {
+                        log.warn("forecast {} {} failed: {}", c, base, e.guidance());
+                        failures.add(c.nx() + "," + c.ny() + " " + e.kind() + (e.code() == null ? "" : " " + e.code()));
+                    }
+                }
+            }
+        }
+        return new Report(base, cells.size(), ok, rows, failures);
+    }
+}

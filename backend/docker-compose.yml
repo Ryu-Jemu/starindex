@@ -1,5 +1,6 @@
 # Local development: PostgreSQL 18 (same major as the planned RDS instance, ADR-013) + Valkey 8 (Redis-compatible, ADR-005).
 # Usage: docker compose -f backend/docker-compose.yml up -d
+# Host ports 15432/16379 (not 5432/6379) so they never collide with other local PostgreSQL/Redis instances.
 services:
   postgres:
     image: postgres:18
@@ -9,7 +10,7 @@ services:
       POSTGRES_USER: starindex
       POSTGRES_PASSWORD: starindex-local
       TZ: Asia/Seoul
-    ports: ["127.0.0.1:5432:5432"]
+    ports: ["127.0.0.1:15432:5432"]
     # postgres:18 keeps PGDATA under /var/lib/postgresql/18/docker; mount the parent (changed from 17 and earlier).
     volumes: ["postgres-data:/var/lib/postgresql"]
     healthcheck:
@@ -21,7 +22,7 @@ services:
     image: valkey/valkey:8
     container_name: starindex-valkey
     command: ["valkey-server", "--maxmemory", "128mb", "--maxmemory-policy", "volatile-lru", "--save", ""]
-    ports: ["127.0.0.1:6379:6379"]
+    ports: ["127.0.0.1:16379:6379"]
     healthcheck:
       test: ["CMD", "valkey-cli", "ping"]
       interval: 5s

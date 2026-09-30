@@ -5,7 +5,7 @@ spring:
     # Local secrets: backend/.env (or the repo-root .env), KEY=VALUE lines, never committed (.gitignore).
     import: "optional:file:.env[.properties],optional:file:../.env[.properties]"
   datasource:
-    url: ${DB_URL:jdbc:postgresql://127.0.0.1:5432/starindex}
+    url: ${DB_URL:jdbc:postgresql://127.0.0.1:15432/starindex}
     username: ${DB_USERNAME:starindex}
     password: ${DB_PASSWORD:starindex-local}
     hikari:
@@ -26,7 +26,7 @@ spring:
   data:
     redis:
       host: ${REDIS_HOST:127.0.0.1}
-      port: ${REDIS_PORT:6379}
+      port: ${REDIS_PORT:16379}
 
 server:
   port: 8080

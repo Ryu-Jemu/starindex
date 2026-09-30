@@ -1,5 +1,8 @@
 # 오늘 밤 별 지수: 스카이뷰 + 하늘색 변화 + Unity AR, 최소 비용 작업 계획 (rev4, 2026-09-29)
 
+> **2026-09-30 변경:** DB는 PostgreSQL 18로 바뀌었다(ADR-013, `docs/adr/ADR-013-postgresql.md`). 이 문서의 "RDS MySQL 8.4"는 "RDS for PostgreSQL 18"로 읽는다. 비용은 같다. ETL 사용법은 `docs/ETL.md`.
+
+
 ## Context
 - **주제**: 「오늘 밤 별 지수」 ETL 미니 프로젝트를 iOS 앱으로 만들어 App Store에 출시한다.
   - 데이터 소스: 기상청 단기예보, 천문연 출몰시각·천문현상, EOG VIIRS
