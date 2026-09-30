@@ -28,7 +28,7 @@ class EtlWithoutKeyTest extends IntegrationTestBase {
 
     @BeforeEach
     void clean() {
-        jdbc.execute("TRUNCATE etl_api_call, kasi_riseset, astro_night, astro_crosscheck");
+        jdbc.execute("TRUNCATE etl_api_call, kasi_riseset, astro_crosscheck");
     }
 
     JobExecution run(Job job, String... kv) throws Exception {
@@ -63,11 +63,10 @@ class EtlWithoutKeyTest extends IntegrationTestBase {
     }
 
     @Test
-    void astroDailyStillComputesWithoutKey() throws Exception {
+    void astroDailyWithoutKeyStillRunsRetention() throws Exception {
         JobExecution e = run(astroDailyJob, "from", "2026-10-12");
         assertEquals(BatchStatus.COMPLETED, e.getStatus());
-        assertEquals(17 * 4, jdbc.queryForObject("SELECT COUNT(*) FROM astro_night", Integer.class));
         assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM kasi_riseset", Integer.class));
-        assertEquals(2, e.getStepExecutions().size(), "retention + astroCompute, then the decider ends the job");
+        assertEquals(1, e.getStepExecutions().size(), "retention, then the decider ends the job");
     }
 }

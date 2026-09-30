@@ -93,8 +93,7 @@ public class PackPublisher {
             stored = packed.gzipBytes();
         }
         String sha = PackWriter.sha256(stored);
-        boolean fresh = repo.insertPack("index", version, nightDate, issuedAt, path, sha, stored.length,
-                packed.rawBytes(), regions.size());
+        boolean fresh = repo.insertPack("index", version, nightDate, issuedAt, path, sha, stored.length);
 
         int scored = (int) nights.stream().filter(n -> n.score() != null).count();
         boolean live = promote(version, path, sha, stored.length, nightDate, issuedAt);

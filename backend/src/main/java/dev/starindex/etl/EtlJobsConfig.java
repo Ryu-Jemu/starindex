@@ -41,7 +41,7 @@ import java.util.stream.Collectors;
  * forecastIngestJob    serviceKeyRequired → forecastFetch
  * starIndexPublishJob  indexPublish
  * forecastPipelineJob  serviceKeyRequired → forecastFetch → indexPublish      (scheduler, after every issue)
- * astroDailyJob        retention → astroCompute → [key?] → kasiRiseSet → crosscheck (no key: Astronomy Engine only)
+ * astroDailyJob        retention → [key?] → kasiRiseSet → crosscheck            (no key: retention only)
  * astroEventsJob       serviceKeyRequired → astroEvents → specialDays? → lunar? (? = skipped if not approved)
  * apiKeyCheckJob       serviceKeyRequired → apiKeyCheck                         (one call per API)
  * </pre>
@@ -114,7 +114,8 @@ public class EtlJobsConfig {
             int scored = index.persist(nightDate, nights);
             if (scored == 0)
                 throw new EtlStopException(nightDate + " 밤: 예보가 있는 천문박명 시간대가 없어 지수를 만들 수 없습니다. "
-                        + "forecastIngestJob을 먼저 실행하세요(예보는 발표 후 약 5일치만 있습니다).");
+                        + "forecastIngestJob을 먼저 실행하세요(예보는 발표 후 약 5일치만 있습니다). "
+                        + "저장 예보는 2일만 보관하므로 이틀보다 이전 밤은 다시 만들 수 없습니다.");
             var published = publisher.publishIndex(nightDate, nights, pack.hourlySlots());
             summary(c, nightDate + " 밤 지수 " + scored + "/" + nights.size() + "개 지점, 팩 " + published.version()
                     + " (" + published.bytes() + " B gz" + (published.newVersion() ? ", 새 버전" : ", 변경 없음")
@@ -128,16 +129,6 @@ public class EtlJobsConfig {
         return new StepBuilder("retention", repo).tasklet((c, ctx) -> {
             var n = etlRepo.purge(etl.forecastRetentionDays(), etl.auditRetentionDays());
             summary(c, "보존 기간 지난 행 삭제 " + n + " (예보 " + etl.forecastRetentionDays() + "일, 감사 " + etl.auditRetentionDays() + "일)");
-            return RepeatStatus.FINISHED;
-        }, noTx).build();
-    }
-
-    @Bean
-    Step astroComputeStep(JobRepository repo, AstroService astro, EtlProperties.Etl etl) {
-        return new StepBuilder("astroCompute", repo).tasklet((c, ctx) -> {
-            LocalDate from = fromParam(c);
-            int n = astro.computeNights(from, etl.astroDaysAhead() + 1);
-            summary(c, "Astronomy Engine 밤 " + n + "건(" + from + "부터 " + (etl.astroDaysAhead() + 1) + "일)");
             return RepeatStatus.FINISHED;
         }, noTx).build();
     }
@@ -222,10 +213,10 @@ public class EtlJobsConfig {
     }
 
     @Bean
-    Job astroDailyJob(JobRepository repo, Step retentionStep, Step astroComputeStep, JobExecutionDecider serviceKeyDecider,
+    Job astroDailyJob(JobRepository repo, Step retentionStep, JobExecutionDecider serviceKeyDecider,
                       Step kasiRiseSetStep, Step crosscheckStep, EtlJobListener l) {
         return new JobBuilder("astroDailyJob", repo).listener(l)
-                .start(retentionStep).next(astroComputeStep).next(serviceKeyDecider).on("NO_KEY").end()
+                .start(retentionStep).next(serviceKeyDecider).on("NO_KEY").end()
                 .from(serviceKeyDecider).on("KEY").to(kasiRiseSetStep).next(crosscheckStep)
                 .end().build();
     }

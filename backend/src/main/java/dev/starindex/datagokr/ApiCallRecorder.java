@@ -4,7 +4,9 @@ package dev.starindex.datagokr;
 @FunctionalInterface
 public interface ApiCallRecorder {
     record Call(ApiSource source, String operation, String requestKey, Integer httpStatus, String resultCode,
-                String resultMsg, Integer itemCount, int durationMs, String outcome) {}
+                String resultMsg, int durationMs, String outcome) {
+        public boolean succeeded() { return "OK".equals(outcome) || "NO_DATA".equals(outcome); }
+    }
 
     void record(Call call);
 

@@ -21,8 +21,8 @@ import java.util.Map;
 /**
  * Astronomy for the ETL:
  * <ul>
- *   <li>Astronomy Engine nights for every point (no key needed; also the fallback when KASI is missing)</li>
- *   <li>KASI 출몰시각 per point and date, and the KASI-vs-computed cross-check (T16)</li>
+ *   <li>Astronomy Engine nights, computed on demand (no key needed; also the fallback when KASI is missing)</li>
+ *   <li>KASI 출몰시각 per point and date (evening times only), and the KASI-vs-computed cross-check (T16)</li>
  *   <li>KASI monthly data: 천문현상 (required), 특일·음양력 (optional until applied for)</li>
  * </ul>
  */
@@ -42,23 +42,9 @@ public class AstroService {
         this.repo = repo;
     }
 
-    /** @return number of (point, night) rows written */
-    public int computeNights(LocalDate from, int days) {
-        int n = 0;
-        for (Region r : regions.findActive())
-            for (int d = 0; d < days; d++) {
-                repo.upsertNight(r.getId(), AstroCalculator.night(from.plusDays(d), r.getLat(), r.getLon(), 0));
-                n++;
-            }
-        return n;
-    }
-
+    /** Deterministic and cheap (milliseconds per point), so it is not stored. */
     public AstroCalculator.NightEvents nightFor(Region r, LocalDate nightDate) {
-        return repo.findNight(r.getId(), nightDate).orElseGet(() -> {
-            var n = AstroCalculator.night(nightDate, r.getLat(), r.getLon(), 0);
-            repo.upsertNight(r.getId(), n);
-            return n;
-        });
+        return AstroCalculator.night(nightDate, r.getLat(), r.getLon(), 0);
     }
 
     public record RiseSetReport(int requested, int stored, List<String> failures) {
@@ -113,8 +99,9 @@ public class AstroService {
                     LocalTime kt = k.get(e.getKey());
                     if (kt == null || e.getValue() == Instant.EPOCH) continue;
                     Instant kasiAt = date.atTime(kt).atZone(AstroCalculator.KST).toInstant();
-                    repo.upsertCrosscheck(r.getId(), date, e.getKey(), kasiAt, e.getValue());
-                    long diff = Math.abs(Duration.between(e.getValue(), kasiAt).toSeconds());
+                    int signed = (int) Duration.between(e.getValue(), kasiAt).toSeconds();
+                    repo.upsertCrosscheck(r.getId(), date, e.getKey(), signed);
+                    long diff = Math.abs(signed);
                     pairs++;
                     max = Math.max(max, diff);
                     if (diff > CROSSCHECK_WARN.toSeconds()) outliers.add(r.getNameKo() + " " + date + " " + e.getKey() + " " + diff + "s");

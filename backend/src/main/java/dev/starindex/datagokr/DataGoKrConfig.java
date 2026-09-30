@@ -30,14 +30,15 @@ public class DataGoKrConfig {
         return new DataGoKrClient(props, recorder, quota);
     }
 
+    /** The message is kept only for failures: it is the one clue to why a call failed (DB-PLAN 2.2). */
     @Bean
     ApiCallRecorder jdbcApiCallRecorder(JdbcTemplate jdbc) {
         return c -> jdbc.update("""
                 INSERT INTO etl_api_call (source, operation, request_key, http_status, result_code, result_msg,
-                                          item_count, duration_ms, outcome)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                          duration_ms, outcome)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                 c.source().name(), c.operation(), truncate(c.requestKey(), 80), c.httpStatus(), truncate(c.resultCode(), 10),
-                truncate(c.resultMsg(), 160), c.itemCount(), c.durationMs(), c.outcome());
+                c.succeeded() ? null : truncate(c.resultMsg(), 80), c.durationMs(), c.outcome());
     }
 
     /**

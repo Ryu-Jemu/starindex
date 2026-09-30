@@ -72,8 +72,8 @@ class EtlJobsIntegrationTest extends IntegrationTestBase {
         try (var paths = Files.walk(PACKS)) {
             paths.sorted(java.util.Comparator.reverseOrder()).filter(p -> !p.equals(PACKS)).forEach(p -> p.toFile().delete());
         }
-        jdbc.execute("TRUNCATE etl_api_call, kma_forecast_hour, kasi_riseset, astro_night, astro_crosscheck, "
-                + "kasi_astro_event, kasi_special_day, kasi_lunar_day, star_index_hourly, star_index_nightly, data_pack");
+        jdbc.execute("TRUNCATE etl_api_call, kma_forecast_hour, kasi_riseset, astro_crosscheck, "
+                + "kasi_astro_event, kasi_special_day, kasi_lunar_day, star_index_nightly, data_pack");
     }
 
     JobExecution run(Job job, String... kv) throws Exception {
@@ -114,6 +114,8 @@ class EtlJobsIntegrationTest extends IntegrationTestBase {
         assertEquals(17, fetch.getWriteCount(), "cells stored");
         assertEquals(0, fetch.getFilterCount(), "cells failed");
         assertEquals(17 * 60, count("kma_forecast_hour"), "one row per cell and hour, six items only");
+        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM etl_api_call WHERE result_msg IS NOT NULL", Integer.class),
+                "successful calls keep no message");
         assertEquals(17, count("star_index_nightly"));
         assertEquals(1, count("data_pack"));
         // Key reached the gateway decoded exactly as configured (strict encoding on the wire).
@@ -240,6 +242,8 @@ class EtlJobsIntegrationTest extends IntegrationTestBase {
         assertEquals(1, WM.getAllServeEvents().size(), "stop at the first key error, not 17 times");
         assertEquals(0, count("kma_forecast_hour"));
         assertEquals(1, count("etl_api_call"));
+        assertEquals("SERVICE_KEY_IS_NOT_REGISTERED_ERROR", jdbc.queryForObject("SELECT result_msg FROM etl_api_call", String.class),
+                "a failure keeps its reason");
     }
 
     @Test
@@ -264,7 +268,6 @@ class EtlJobsIntegrationTest extends IntegrationTestBase {
                         Fixtures.riseSet("{{request.query.locdate}}", "테스트", "{{request.query.latitude}}", "{{request.query.longitude}}", null, null))));
         JobExecution e = run(astroDailyJob, "from", "2026-09-29");
         assertEquals(BatchStatus.COMPLETED, e.getStatus(), failures(e));
-        assertEquals(17 * 4, count("astro_night"));
         assertEquals(17 * 4, count("kasi_riseset"));
         Integer seoulSunsetDiff = jdbc.queryForObject("""
                 SELECT diff_seconds FROM astro_crosscheck WHERE region_id = 1100000000 AND night_date = '2026-09-29' AND field = 'sunset'""",

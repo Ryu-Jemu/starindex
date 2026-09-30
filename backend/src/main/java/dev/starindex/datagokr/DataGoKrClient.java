@@ -99,7 +99,7 @@ public class DataGoKrClient {
                 Kind kind = classify(body.resultCode(), Kind.PROVIDER);
                 throw fail(source, operation, requestKey, t0, status, body.resultCode(), body.resultMsg(), kind, body.resultMsg(), null);
             }
-            record(source, operation, requestKey, t0, status, body.resultCode(), body.resultMsg(), body.items().size(),
+            record(source, operation, requestKey, t0, status, body.resultCode(), body.resultMsg(),
                     body.noData() ? "NO_DATA" : "OK");
             return body;
         } catch (DataGoKrException e) {
@@ -138,15 +138,15 @@ public class DataGoKrClient {
 
     private DataGoKrException fail(ApiSource source, String op, String requestKey, long t0, Integer status, String code,
                                    String msg, Kind kind, String message, Throwable cause) {
-        record(source, op, requestKey, t0, status, code, msg, null, kind.name());
+        record(source, op, requestKey, t0, status, code, msg, kind.name());
         return new DataGoKrException(source, kind, code, status == null ? 0 : status, message, cause);
     }
 
     private void record(ApiSource source, String op, String requestKey, long t0, Integer status, String code,
-                        String msg, Integer items, String outcome) {
+                        String msg, String outcome) {
         int ms = (int) ((System.nanoTime() - t0) / 1_000_000);
         try {
-            recorder.record(new ApiCallRecorder.Call(source, op, requestKey, status, code, msg, items, ms, outcome));
+            recorder.record(new ApiCallRecorder.Call(source, op, requestKey, status, code, msg, ms, outcome));
         } catch (RuntimeException e) {
             log.warn("could not record api call: {}", e.toString());
         }

@@ -6,7 +6,6 @@ import dev.starindex.etl.EtlRepository;
 import dev.starindex.region.Region;
 import dev.starindex.region.RegionQueryRepository;
 import org.springframework.stereotype.Service;
-import tools.jackson.databind.json.JsonMapper;
 
 import java.time.Instant;
 import java.time.LocalDate;
@@ -32,7 +31,6 @@ public class IndexService {
     private final RegionQueryRepository regions;
     private final EtlRepository repo;
     private final AstroService astro;
-    private final JsonMapper json = JsonMapper.builder().build();
 
     public IndexService(RegionQueryRepository regions, EtlRepository repo, AstroService astro) {
         this.regions = regions;
@@ -72,14 +70,13 @@ public class IndexService {
         return out;
     }
 
-    /** Stores hourly and nightly scores of the points that have one. @return number of scored points */
+    /** Stores the nightly score of the points that have one. @return number of scored points */
     public int persist(LocalDate nightDate, List<RegionNight> nights) {
         int n = 0;
         for (RegionNight rn : nights) {
             if (rn.score() == null) continue;
             Instant base = rn.baseAt() != null ? rn.baseAt() : rn.score().bestFrom();
-            repo.upsertIndex(rn.region().getId(), nightDate, base, rn.score(),
-                    json.writeValueAsString(rn.score().contributions()), json.writeValueAsString(rn.score().reasons()));
+            repo.upsertIndex(rn.region().getId(), nightDate, base, rn.score().score(), rn.score().grade().name());
             n++;
         }
         return n;
