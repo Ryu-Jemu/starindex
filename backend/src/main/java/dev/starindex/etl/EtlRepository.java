@@ -36,45 +36,44 @@ public class EtlRepository {
 
     // ---------------------------------------------------------------- KMA forecast
 
+    /**
+     * Merges one issue into kma_forecast_hour (one row per cell and forecast hour). A newer issue overwrites each item
+     * it has a value for and keeps the stored value where it has none; an older issue arriving late only fills blanks.
+     * With issues in order this equals "newest non-missing value per item".
+     * @return hourly rows written
+     */
     public int upsertForecast(KmaForecastClient.Result r) {
         OffsetDateTime base = ts(r.base().at().toInstant());
-        List<Object[]> rows = new ArrayList<>(r.items().size());
-        for (var i : r.items())
-            rows.add(new Object[]{r.nx(), r.ny(), base, ts(i.fcstAt()), i.category(), i.valueText(), i.valueNum(), i.code()});
+        List<Object[]> rows = new ArrayList<>();
+        for (var h : KmaForecastClient.hours(r.items()))
+            rows.add(new Object[]{r.nx(), r.ny(), ts(h.fcstAt()), base, h.sky(), h.pty(), h.tmp(), h.reh(), h.wsd(), h.pop()});
         jdbc.batchUpdate("""
-                INSERT INTO kma_forecast (nx, ny, base_at, fcst_at, category, value_text, value_num, value_is_code)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT (nx, ny, base_at, fcst_at, category) DO UPDATE
-                SET value_text = EXCLUDED.value_text, value_num = EXCLUDED.value_num,
-                    value_is_code = EXCLUDED.value_is_code, ingested_at = now()""", rows);
-        jdbc.update("""
-                INSERT INTO kma_forecast_issue (nx, ny, base_at, row_count, total_count) VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT (nx, ny, base_at) DO UPDATE
-                SET row_count = EXCLUDED.row_count, total_count = EXCLUDED.total_count, fetched_at = now()""",
-                r.nx(), r.ny(), base, r.items().size(), r.totalCount());
+                INSERT INTO kma_forecast_hour AS t (nx, ny, fcst_at, base_at, sky, pty, tmp, reh, wsd, pop)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT (nx, ny, fcst_at) DO UPDATE SET
+                  sky = CASE WHEN EXCLUDED.base_at >= t.base_at THEN COALESCE(EXCLUDED.sky, t.sky) ELSE COALESCE(t.sky, EXCLUDED.sky) END,
+                  pty = CASE WHEN EXCLUDED.base_at >= t.base_at THEN COALESCE(EXCLUDED.pty, t.pty) ELSE COALESCE(t.pty, EXCLUDED.pty) END,
+                  tmp = CASE WHEN EXCLUDED.base_at >= t.base_at THEN COALESCE(EXCLUDED.tmp, t.tmp) ELSE COALESCE(t.tmp, EXCLUDED.tmp) END,
+                  reh = CASE WHEN EXCLUDED.base_at >= t.base_at THEN COALESCE(EXCLUDED.reh, t.reh) ELSE COALESCE(t.reh, EXCLUDED.reh) END,
+                  wsd = CASE WHEN EXCLUDED.base_at >= t.base_at THEN COALESCE(EXCLUDED.wsd, t.wsd) ELSE COALESCE(t.wsd, EXCLUDED.wsd) END,
+                  pop = CASE WHEN EXCLUDED.base_at >= t.base_at THEN COALESCE(EXCLUDED.pop, t.pop) ELSE COALESCE(t.pop, EXCLUDED.pop) END,
+                  base_at = GREATEST(t.base_at, EXCLUDED.base_at)""", rows);
         return rows.size();
     }
 
-    public int countIssueCells(KmaBaseTime base) {
-        Integer n = jdbc.queryForObject("SELECT COUNT(*) FROM kma_forecast_issue WHERE base_at = ?", Integer.class,
-                ts(base.at().toInstant()));
-        return n == null ? 0 : n;
-    }
-
-    /** Latest-issue value per (hour, category) in [from, to) for one grid cell. */
-    public Map<Instant, Map<String, Double>> latestForecast(int nx, int ny, Instant from, Instant to, List<String> categories) {
+    /** Stored items per forecast hour in [from, to) for one grid cell; keys SKY, PTY, TMP, REH, WSD, POP (null = none). */
+    public Map<Instant, Map<String, Double>> latestForecast(int nx, int ny, Instant from, Instant to) {
         Map<Instant, Map<String, Double>> out = new HashMap<>();
-        String in = String.join(",", categories.stream().map(c -> "'" + c.replaceAll("[^A-Z0-9]", "") + "'").toList());
         jdbc.query("""
-                SELECT DISTINCT ON (fcst_at, category) fcst_at, category, value_num
-                FROM kma_forecast
-                WHERE nx = ? AND ny = ? AND fcst_at >= ? AND fcst_at < ? AND category IN (%s)
-                ORDER BY fcst_at, category, (value_num IS NULL), base_at DESC""".formatted(in),
+                SELECT fcst_at, sky, pty, tmp, reh, wsd, pop FROM kma_forecast_hour
+                WHERE nx = ? AND ny = ? AND fcst_at >= ? AND fcst_at < ?""",
                 rs -> {
-                    Instant at = rs.getObject("fcst_at", OffsetDateTime.class).toInstant();
-                    double v = rs.getDouble("value_num");
-                    Double value = rs.wasNull() ? null : v;
-                    out.computeIfAbsent(at, k -> new HashMap<>()).put(rs.getString("category"), value);
+                    Map<String, Double> v = new HashMap<>();
+                    for (String c : List.of("SKY", "PTY", "TMP", "REH", "WSD", "POP")) {
+                        java.math.BigDecimal d = rs.getBigDecimal(c.toLowerCase());
+                        v.put(c, d == null ? null : d.doubleValue());
+                    }
+                    out.put(rs.getObject("fcst_at", OffsetDateTime.class).toInstant(), v);
                 }, nx, ny, ts(from), ts(to));
         return out;
     }
@@ -85,15 +84,14 @@ public class EtlRepository {
      */
     public Map<String, Integer> purge(int forecastDays, int auditDays) {
         Map<String, Integer> n = new java.util.LinkedHashMap<>();
-        n.put("kma_forecast", jdbc.update("DELETE FROM kma_forecast WHERE base_at < now() - make_interval(days => ?)", forecastDays));
-        n.put("kma_forecast_issue", jdbc.update("DELETE FROM kma_forecast_issue WHERE base_at < now() - make_interval(days => ?)", forecastDays));
+        n.put("kma_forecast_hour", jdbc.update("DELETE FROM kma_forecast_hour WHERE fcst_at < now() - make_interval(days => ?)", forecastDays));
         n.put("etl_api_call", jdbc.update("DELETE FROM etl_api_call WHERE called_at < now() - make_interval(days => ?)", auditDays));
         n.put("star_index_hourly", jdbc.update("DELETE FROM star_index_hourly WHERE night_date < current_date - ?", auditDays));
         return n;
     }
 
     public Optional<Instant> latestBaseAt(int nx, int ny) {
-        List<OffsetDateTime> l = jdbc.queryForList("SELECT MAX(base_at) FROM kma_forecast_issue WHERE nx = ? AND ny = ?",
+        List<OffsetDateTime> l = jdbc.queryForList("SELECT MAX(base_at) FROM kma_forecast_hour WHERE nx = ? AND ny = ?",
                 OffsetDateTime.class, nx, ny);
         return l.isEmpty() || l.getFirst() == null ? Optional.empty() : Optional.of(l.getFirst().toInstant());
     }

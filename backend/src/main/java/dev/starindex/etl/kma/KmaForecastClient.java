@@ -6,6 +6,8 @@ import dev.starindex.datagokr.DataGoKrException;
 import dev.starindex.datagokr.DataGoKrXml;
 import org.springframework.stereotype.Component;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
@@ -16,10 +18,12 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 
 /**
  * 단기예보 getVilageFcst for one grid cell and issue. Pages with numOfRows=1000 until totalCount (17/20/23시 issues
- * exceed 1,000 rows since the 5-day extension). XML is requested (the default).
+ * exceed 1,000 rows since the 5-day extension). XML is requested (the default). The API always returns all 12 items;
+ * only the six the service reads are kept ({@link #hours}).
  */
 @Component
 public class KmaForecastClient {
@@ -28,10 +32,15 @@ public class KmaForecastClient {
     static final int MAX_PAGES = 5;
     private static final DateTimeFormatter DATE = DateTimeFormatter.BASIC_ISO_DATE;
     private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("HHmm");
-    /** Hourly numeric categories of 단기예보 (SKY/PTY are code numbers, stored numerically). */
-    private static final Set<String> NUMERIC = Set.of("TMP", "TMN", "TMX", "UUU", "VVV", "VEC", "WSD", "POP", "REH", "SKY", "PTY", "WAV");
+    /** The only 단기예보 items the service reads (ADR-014): index SKY/PTY, pack series TMP/REH/WSD/POP. */
+    public static final Set<String> STORED = Set.of("SKY", "PTY", "TMP", "REH", "WSD", "POP");
 
     public record Item(Instant fcstAt, String category, String valueText, Double valueNum, boolean code) {}
+
+    /** One stored row: the six items of one forecast hour (null = missing or not a value). */
+    public record Hour(Instant fcstAt, Short sky, Short pty, BigDecimal tmp, Short reh, BigDecimal wsd, Short pop) {
+        boolean empty() { return sky == null && pty == null && tmp == null && reh == null && wsd == null && pop == null; }
+    }
 
     public record Result(KmaBaseTime base, int nx, int ny, int totalCount, List<Item> items) {}
 
@@ -65,6 +74,27 @@ public class KmaForecastClient {
         return new Result(base, nx, ny, total, items);
     }
 
+    /** Pivots one issue into hourly rows of the six stored items, in time order; hours with no value are dropped. */
+    public static List<Hour> hours(List<Item> items) {
+        Map<Instant, Map<String, Double>> byHour = new TreeMap<>();
+        for (Item i : items) {
+            if (!STORED.contains(i.category()) || i.code() || i.valueNum() == null) continue;
+            byHour.computeIfAbsent(i.fcstAt(), k -> new java.util.HashMap<>()).put(i.category(), i.valueNum());
+        }
+        List<Hour> out = new ArrayList<>(byHour.size());
+        for (var e : byHour.entrySet()) {
+            Map<String, Double> v = e.getValue();
+            Hour h = new Hour(e.getKey(), small(v.get("SKY")), small(v.get("PTY")), tenth(v.get("TMP")),
+                    small(v.get("REH")), tenth(v.get("WSD")), small(v.get("POP")));
+            if (!h.empty()) out.add(h);
+        }
+        return out;
+    }
+
+    private static Short small(Double d) { return d == null ? null : (short) Math.round(d); }
+
+    private static BigDecimal tenth(Double d) { return d == null ? null : BigDecimal.valueOf(d).setScale(1, RoundingMode.HALF_UP); }
+
     static Item toItem(KmaBaseTime base, Map<String, String> row) {
         String category = row.getOrDefault("category", "").strip();
         LocalDate fcstDate = LocalDate.parse(row.get("fcstDate").strip(), DATE);
@@ -72,7 +102,7 @@ public class KmaForecastClient {
         String text = row.getOrDefault("fcstValue", "").strip();
         Instant at = fcstDate.atTime(fcstTime).atZone(KmaBaseTime.KST).toInstant();
         boolean extended = isExtendedPeriod(base, fcstDate);
-        if (extended && (category.equals("PCP") || category.equals("SNO") || category.equals("WSD")))
+        if (extended && category.equals("WSD"))       // 연장 구간 풍속은 1/2/3 코드값이지 m/s가 아니다
             return new Item(at, category, text, null, true);
         return new Item(at, category, text, numeric(category, text), false);
     }
@@ -86,28 +116,11 @@ public class KmaForecastClient {
         return base.time().getHour() <= 14 ? offset >= 3 : offset >= 4;
     }
 
-    /** Parsed number, or null for missing (|v| >= 900) and text we cannot place on a scale. */
+    /** Parsed number for the stored items, or null for missing values (|v| >= 900) and every other item. */
     static Double numeric(String category, String text) {
-        if (NUMERIC.contains(category)) {
-            try {
-                double v = Double.parseDouble(text);
-                return Math.abs(v) >= 900 ? null : v;
-            } catch (NumberFormatException e) {
-                return null;
-            }
-        }
-        if (category.equals("PCP") || category.equals("SNO")) return amount(text);
-        return null;
-    }
-
-    /** '강수없음'/'적설없음' → 0, '1mm 미만' → 0.5, '6.2mm' → 6.2, '30.0~50.0mm' → 30, '50.0mm 이상' → 50. */
-    static Double amount(String text) {
-        String t = text.replace(" ", "");
-        if (t.equals("강수없음") || t.equals("적설없음") || t.equals("-") || t.isEmpty()) return 0.0;
-        if (t.endsWith("미만")) return t.startsWith("0.5") ? 0.25 : 0.5;
-        String num = t.replaceAll("^([0-9.]+).*$", "$1");
+        if (!STORED.contains(category)) return null;
         try {
-            double v = Double.parseDouble(num);
+            double v = Double.parseDouble(text);
             return Math.abs(v) >= 900 ? null : v;
         } catch (NumberFormatException e) {
             return null;

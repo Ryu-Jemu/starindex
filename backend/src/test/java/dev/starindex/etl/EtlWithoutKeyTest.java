@@ -50,15 +50,15 @@ class EtlWithoutKeyTest extends IntegrationTestBase {
 
     @Test
     void dailyRetentionDropsOldForecastsAndAudit() throws Exception {
-        jdbc.execute("TRUNCATE kma_forecast, kma_forecast_issue");
+        jdbc.execute("TRUNCATE kma_forecast_hour");
         jdbc.update("""
-                INSERT INTO kma_forecast (nx, ny, base_at, fcst_at, category, value_text, value_num) VALUES
-                (60, 127, now() - interval '30 days', now() - interval '29 days', 'SKY', '1', 1),
-                (60, 127, now() - interval '1 day', now(), 'SKY', '3', 3)""");
+                INSERT INTO kma_forecast_hour (nx, ny, fcst_at, base_at, sky) VALUES
+                (60, 127, now() - interval '29 days', now() - interval '30 days', 1),
+                (60, 127, now(), now() - interval '1 day', 3)""");
         jdbc.update("INSERT INTO etl_api_call (source, operation, request_key, duration_ms, outcome, called_at) "
                 + "VALUES ('KMA_VILAGE', 'getVilageFcst', 'old', 1, 'OK', now() - interval '200 days')");
         assertEquals(BatchStatus.COMPLETED, run(astroDailyJob).getStatus());
-        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM kma_forecast", Integer.class));
+        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM kma_forecast_hour", Integer.class));
         assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM etl_api_call", Integer.class));
     }
 

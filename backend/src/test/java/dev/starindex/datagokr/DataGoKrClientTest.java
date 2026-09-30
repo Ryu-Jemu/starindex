@@ -151,7 +151,7 @@ class DataGoKrClientTest {
         var base = KmaBaseTime.parse("20261012", "1700");
         LocalDate d = LocalDate.of(2026, 10, 12);
         List<String[]> all = new ArrayList<>(Fixtures.kmaHours(d, 18, 146, 3, 0));        // 146 h × 7 = 1022 rows
-        all.add(new String[]{"PCP", "20261016", "1800", "1"});                              // 그글피 → code
+        all.add(new String[]{"WSD", "20261016", "1800", "1"});                              // 그글피 → code, not m/s
         all.add(new String[]{"TMP", "20261013", "0300", "-999"});                           // missing
         int total = all.size();
         wm.stubFor(get(urlPathEqualTo("/1360000/VilageFcstInfoService_2.0/getVilageFcst")).withQueryParam("pageNo", equalTo("1"))
@@ -161,8 +161,21 @@ class DataGoKrClientTest {
         var res = new KmaForecastClient(client(KEY)).fetch(60, 127, base);
         assertEquals(total, res.items().size());
         assertEquals(2, wm.getAllServeEvents().size());
-        var code = res.items().stream().filter(i -> i.category().equals("PCP") && i.code()).findFirst().orElseThrow();
+        var code = res.items().stream().filter(i -> i.category().equals("WSD") && i.code()).findFirst().orElseThrow();
         assertNull(code.valueNum());
+        // Stored rows: six items per hour only, codes and missing values never become numbers.
+        var hours = KmaForecastClient.hours(res.items());
+        assertEquals(146, hours.size(), "one row per forecast hour");
+        var first = hours.getFirst();
+        assertEquals((short) 3, first.sky());
+        assertEquals(new java.math.BigDecimal("14.0"), first.tmp());
+        assertEquals(new java.math.BigDecimal("1.8"), first.wsd());
+        var coded = hours.stream().filter(h -> h.fcstAt().equals(code.fcstAt())).findFirst().orElseThrow();
+        assertNull(coded.wsd(), "extended-period WSD is a code, never stored as m/s");
+        assertEquals((short) 3, coded.sky());
+        var tmp0300 = hours.stream().filter(h -> h.fcstAt().equals(ZonedDateTime.of(2026, 10, 13, 3, 0, 0, 0, KmaBaseTime.KST).toInstant()))
+                .findFirst().orElseThrow();
+        assertEquals(new java.math.BigDecimal("14.0"), tmp0300.tmp(), "a missing (-999) duplicate never erases a value");
         var missing = res.items().stream().filter(i -> i.valueText().equals("-999")).findFirst().orElseThrow();
         assertNull(missing.valueNum());
         var sky = res.items().stream().filter(i -> i.category().equals("SKY")).findFirst().orElseThrow();

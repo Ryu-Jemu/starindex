@@ -72,7 +72,7 @@ class EtlJobsIntegrationTest extends IntegrationTestBase {
         try (var paths = Files.walk(PACKS)) {
             paths.sorted(java.util.Comparator.reverseOrder()).filter(p -> !p.equals(PACKS)).forEach(p -> p.toFile().delete());
         }
-        jdbc.execute("TRUNCATE etl_api_call, kma_forecast, kma_forecast_issue, kasi_riseset, astro_night, astro_crosscheck, "
+        jdbc.execute("TRUNCATE etl_api_call, kma_forecast_hour, kasi_riseset, astro_night, astro_crosscheck, "
                 + "kasi_astro_event, kasi_special_day, kasi_lunar_day, star_index_hourly, star_index_nightly, data_pack");
     }
 
@@ -87,6 +87,10 @@ class EtlJobsIntegrationTest extends IntegrationTestBase {
     }
 
     int count(String table) { return jdbc.queryForObject("SELECT COUNT(*) FROM " + table, Integer.class); }
+
+    static StepExecution step(JobExecution e, String name) {
+        return e.getStepExecutions().stream().filter(s -> s.getStepName().equals(name)).findFirst().orElseThrow();
+    }
 
     void stubForecastForAllCells(String baseDate, String baseTime, LocalDate night, int sky, int pty) {
         for (var r : regions.findActive()) {
@@ -106,8 +110,10 @@ class EtlJobsIntegrationTest extends IntegrationTestBase {
 
         JobExecution e = run(forecastPipelineJob, "base", "202610121700", "nightDate", "2026-10-12");
         assertEquals(BatchStatus.COMPLETED, e.getStatus(), failures(e));
-        assertEquals(17, count("kma_forecast_issue"));
-        assertEquals(17 * 60 * 7, count("kma_forecast"));
+        var fetch = step(e, "forecastFetch");
+        assertEquals(17, fetch.getWriteCount(), "cells stored");
+        assertEquals(0, fetch.getFilterCount(), "cells failed");
+        assertEquals(17 * 60, count("kma_forecast_hour"), "one row per cell and hour, six items only");
         assertEquals(17, count("star_index_nightly"));
         assertEquals(1, count("data_pack"));
         // Key reached the gateway decoded exactly as configured (strict encoding on the wire).
@@ -136,7 +142,7 @@ class EtlJobsIntegrationTest extends IntegrationTestBase {
         // Rerun: same rows, same pack version (content-addressed), nothing duplicated.
         JobExecution again = run(forecastPipelineJob, "base", "202610121700", "nightDate", "2026-10-12");
         assertEquals(BatchStatus.COMPLETED, again.getStatus(), failures(again));
-        assertEquals(17 * 60 * 7, count("kma_forecast"));
+        assertEquals(17 * 60, count("kma_forecast_hour"));
         assertEquals(1, count("data_pack"));
         assertEquals(manifest.at("/packs/index/version").asString(),
                 JsonMapper.builder().build().readTree(packStore.get(PackPublisher.MANIFEST_PATH).orElseThrow()).at("/packs/index/version").asString());
@@ -186,17 +192,6 @@ class EtlJobsIntegrationTest extends IntegrationTestBase {
         assertEquals(0, WM.getAllServeEvents().size());
     }
 
-    @Test
-    void aMissingNewestValueFallsBackToTheOlderIssue() {
-        var hour = java.time.OffsetDateTime.parse("2026-10-12T21:00:00+09:00");
-        jdbc.update("""
-                INSERT INTO kma_forecast (nx, ny, base_at, fcst_at, category, value_text, value_num) VALUES
-                (60, 127, '2026-10-12T14:00:00+09:00', ?, 'SKY', '1', 1),
-                (60, 127, '2026-10-12T17:00:00+09:00', ?, 'SKY', '-999', NULL)""", hour, hour);
-        var v = etlRepository.latestForecast(60, 127, hour.toInstant(), hour.toInstant().plusSeconds(3600), java.util.List.of("SKY"));
-        assertEquals(1.0, v.get(hour.toInstant()).get("SKY"));
-    }
-
     /**
      * DB-PLAN C2: the app-facing pack must not change while the storage underneath is reshaped (V5/V6). The hash was
      * recorded with the pre-change code (commit 269d608) for this fixed input; mixed SKY/PTY exercise every branch.
@@ -243,7 +238,7 @@ class EtlJobsIntegrationTest extends IntegrationTestBase {
         assertEquals(BatchStatus.FAILED, e.getStatus());
         assertTrue(failures(e).contains("활용신청"), failures(e));
         assertEquals(1, WM.getAllServeEvents().size(), "stop at the first key error, not 17 times");
-        assertEquals(0, count("kma_forecast"));
+        assertEquals(0, count("kma_forecast_hour"));
         assertEquals(1, count("etl_api_call"));
     }
 
@@ -255,7 +250,11 @@ class EtlJobsIntegrationTest extends IntegrationTestBase {
         JobExecution e = run(forecastIngestJob, "base", "202610121700");
         assertEquals(BatchStatus.FAILED, e.getStatus());
         assertTrue(failures(e).contains("완결성 미달"), failures(e));
-        assertEquals(15, count("kma_forecast_issue"), "서울(60,127)과 경기(60,120)만 실패하고 나머지는 저장");
+        assertEquals(15, jdbc.queryForObject("SELECT COUNT(DISTINCT (nx, ny)) FROM kma_forecast_hour", Integer.class),
+                "서울(60,127)과 경기(60,120)만 실패하고 나머지는 저장");
+        var fetch = step(e, "forecastFetch");
+        assertEquals(15, fetch.getWriteCount());
+        assertEquals(2, fetch.getFilterCount());
     }
 
     @Test

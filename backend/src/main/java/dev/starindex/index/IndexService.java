@@ -51,7 +51,7 @@ public class IndexService {
         List<RegionNight> out = new ArrayList<>();
         for (Region r : regions.findActive()) {
             var night = astro.nightFor(r, nightDate);
-            var series = repo.latestForecast(r.getKmaNx(), r.getKmaNy(), seriesStart, seriesEnd, SERIES);
+            var series = repo.latestForecast(r.getKmaNx(), r.getKmaNy(), seriesStart, seriesEnd);
             Instant baseAt = repo.latestBaseAt(r.getKmaNx(), r.getKmaNy()).orElse(null);
             List<StarIndexCalculator.HourInput> dark = new ArrayList<>();
             if (night.astronomicalDusk() != null && night.astronomicalDawn() != null) {

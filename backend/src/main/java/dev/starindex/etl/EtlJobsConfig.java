@@ -92,6 +92,9 @@ public class EtlJobsConfig {
                                 return KmaBaseTime.parse(v.substring(0, 8), v.substring(8, 12));
                             });
             var report = ingest.ingest(base);
+            // Completeness as numbers the admin page can aggregate: WRITE = cells stored, FILTER = cells failed.
+            c.incrementWriteCount(report.ok());
+            c.incrementFilterCount(report.cells() - report.ok());
             c.getStepExecution().getJobExecution().getExecutionContext().putString("forecast.base", base.dateParam() + base.timeParam());
             summary(c, report.summary());
             if (report.completeness() < etl.forecastMinCompleteness())

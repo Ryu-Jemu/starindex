@@ -28,7 +28,7 @@ public class ForecastIngestService {
         public double completeness() { return cells == 0 ? 0 : (double) ok / cells; }
 
         public String summary() {
-            return "단기예보 " + base + " 발표: 격자 " + ok + "/" + cells + " 저장, " + rows + "행"
+            return "단기예보 " + base + " 발표: 격자 " + ok + "/" + cells + " 저장, 시간대 " + rows + "행"
                     + (failures.isEmpty() ? "" : ", 실패 " + failures.size() + "건 " + failures);
         }
     }
