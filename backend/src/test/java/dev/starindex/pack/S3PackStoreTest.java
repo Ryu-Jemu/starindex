@@ -23,16 +23,18 @@ class S3PackStoreTest {
     static final GenericContainer<?> S3 = new GenericContainer<>("adobe/s3mock:5.2.3").withExposedPorts(9090)
             .waitingFor(Wait.forHttp("/").forPort(9090).forStatusCodeMatching(c -> c < 500));
     static S3Client s3;
-    static S3PackStore store;
+    static S3PackStore store, viaDefaultChain;
 
     @BeforeAll
     static void start() {
         S3.start();
         String endpoint = "http://" + S3.getHost() + ":" + S3.getMappedPort(9090);
-        // The production factory (path-style, checksums WHEN_REQUIRED) with the default credential chain.
+        // The production factory (path-style, checksums WHEN_REQUIRED): an explicit key pair, as from backend/.env …
+        store = S3PackStore.create("starindex-test", endpoint, "ap-southeast-1", "test", "test");
+        // … and the SDK default chain, as in GitHub Actions (here through the equivalent system properties).
         System.setProperty("aws.accessKeyId", "test");
         System.setProperty("aws.secretAccessKey", "test");
-        store = S3PackStore.create("starindex-test", endpoint, "ap-southeast-1");
+        viaDefaultChain = S3PackStore.create("starindex-test", endpoint, "ap-southeast-1", "", null);
         s3 = S3Client.builder().region(Region.AP_SOUTHEAST_1).endpointOverride(URI.create(endpoint)).forcePathStyle(true)
                 .credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create("test", "test")))
                 .httpClient(UrlConnectionHttpClient.create()).build();
@@ -53,6 +55,7 @@ class S3PackStoreTest {
         store.put("packs/index/v1/index.json.gz", gz, "application/gzip", PackStore.IMMUTABLE);
         store.put(PackPublisher.MANIFEST_PATH, "{}".getBytes(StandardCharsets.UTF_8), "application/json", PackStore.MANIFEST);
         assertArrayEquals(gz, store.get("packs/index/v1/index.json.gz").orElseThrow());
+        assertArrayEquals(gz, viaDefaultChain.get("packs/index/v1/index.json.gz").orElseThrow());
         var head = s3.headObject(b -> b.bucket("starindex-test").key("packs/index/v1/index.json.gz"));
         assertEquals("application/gzip", head.contentType());
         assertEquals(PackStore.IMMUTABLE, head.cacheControl());
@@ -80,6 +83,6 @@ class S3PackStoreTest {
     void refusesPathsOutsideTheBucketLayout() {
         assertThrows(IllegalArgumentException.class, () -> store.put("/packs/x", new byte[0], "a", "b"));
         assertThrows(IllegalArgumentException.class, () -> store.get("packs/../backup/db/x"));
-        assertThrows(IllegalStateException.class, () -> S3PackStore.create("b", "", "ap-southeast-1"));
+        assertThrows(IllegalStateException.class, () -> S3PackStore.create("b", "", "ap-southeast-1", null, null));
     }
 }

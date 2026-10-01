@@ -18,11 +18,10 @@
 
 ## D-1 준비 (체크리스트)
 
-- [ ] `curl -s https://<CloudFront 도메인>/api/health` → `{"status":"UP"}` (docs/AWS.md W3 ①)
-- [ ] 관리자 화면에서 '발행 중인 팩'의 발표 시각이 6시간 이내인지 확인(CloudWatch `PackAgeMinutes` < 360)
-- [ ] SSM 터널을 한 번 열어 본다: `aws ssm start-session --target <instance> --document-name AWS-StartPortForwardingSession --parameters portNumber=8080,localPortNumber=18080` → `http://localhost:18080/admin`
-- [ ] 실기기(iPhone 14 Pro)에 Release 빌드 설치. `STARINDEX_PACK_BASE_URL`이 CloudFront 도메인인지 확인
-- [ ] GitHub Actions의 최근 `backend` 실행이 deploy 잡까지 초록색인지 확인
+- [ ] `python3 scripts/check-public-pack.py <PACK_PUBLIC_URL>` 통과(익명 읽기, sha256, 발표 6시간 이내)
+- [ ] GitHub Actions `etl` 최근 8회가 초록색(24시간 무인 수집·발행), `backend` 테스트 초록색
+- [ ] Mac에서 관리자 화면: `cd backend && docker compose up -d valkey && ./gradlew bootRun` → `http://localhost:8080/admin` 로그인(`backend/.env`의 Neon 접속 정보·관리자 해시)
+- [ ] 실기기(iPhone 14 Pro)에 Release 빌드 설치. `STARINDEX_PACK_BASE_URL`이 Neon 공개 버킷 주소(https)인지 확인
 - [ ] 배포 동결(10/17 12:00 또는 D-2 12:00) 뒤 24시간 무인 수집·발행 성공(관리자 실행 이력 8회, PLAN W3 ④)
 - [ ] 실제 날씨가 시연에 맞지 않을 때 쓸 **저장 예보 팩** 버전을 정해 둔다(`scripts/etl.sh pin <version>`; 앱에는 '저장된 예보 · MM/DD HH시 발표'로 표시된다)
 
@@ -33,16 +32,16 @@
 | 1 | 앱 실행 → 첫 화면이 바로 하늘 | 번들 카탈로그(BSC5P)와 마지막 위치로 즉시 그린다. 위치는 기기 밖으로 나가지 않는다(D4) | 위치 거부 상태면 '서울(기본 위치)' 칩이 보인다. 그대로 진행 |
 | 2 | 폰을 돌린다 | CoreMotion 진북 프레임 60Hz, 방위 배지(진북 기준) | 실내 자기 교란이면 배지가 노랑·빨강 → '수동' 버튼으로 드래그 |
 | 3 | '해질녘 재생'(약 20초) | 일몰 17:48 → 시민·항해박명 → 천문박명 끝 19:16. 밝은 별부터 나타난다(m_tw) | 프레임이 끊기면 재생 대신 '지금' 버튼으로 실시간 하늘 |
-| 4 | 상단 지수 칩 '오늘 밤 NN · 17시 발표' | ETL(기상청 단기예보 → 지수) → S3 팩 → CloudFront → 앱. 앱은 manifest만 2분마다 확인한다 | 칩이 '저장된 예보'면 그대로 설명. '지수 서버 미설정'이면 Release 빌드 설정 누락 |
+| 4 | 상단 지수 칩 '오늘 밤 NN · 17시 발표' | ETL(GitHub Actions 예약 실행: 기상청 단기예보 → 지수) → Neon 공개 버킷의 팩 → 앱. 앱은 manifest만 2분마다 확인한다. 전부 무과금(ADR-017) | 칩이 '저장된 예보'면 그대로 설명. '지수 서버 미설정'이면 Release 빌드 설정 누락 |
 | 5 | 칩을 눌러 시트 | 최적 2시간 창, 이유(구름·달), 천문박명 시각(천문연 또는 계산), 출처 | — |
 | 6 | 토성을 탭 | 상세: 고도·방위·등급과 '뜸 17:11 · 남중 23:17 · 짐' | 화면에 없으면 수동 모드로 동남동(105°)을 향한다 |
-| 7 | 노트북: SSM 터널 → `/admin` | JWT 로그인, 실행 이력(QueryDSL 필터: Job·상태·날짜), 실행 상세의 단계별 요약, '지금 실행'(202, 실행 중이면 409) | 터널이 안 열리면 실행 이력 스크린샷 |
-| 8 | GitHub Actions → CodeDeploy | main 푸시 → 테스트 → S3 `deploy/backend/<sha>.zip` → CodeDeploy(검증 훅: 8081 actuator + 8080 `/api/health`) | 최근 성공한 실행 화면 |
-| 9 | 아키텍처 한 장 | GitHub Actions → S3 → CodeDeploy → EC2(Spring Boot, Valkey(Redis), JWT, WebSocket, QueryDSL) / DB: Neon PostgreSQL 18(RDS 대신, ADR-016) / CloudFront + S3 팩 / Bootstrap 관리자 | — |
+| 7 | 노트북: `localhost:8080/admin` | JWT 로그인, 실행 이력(QueryDSL 필터: Job·상태·날짜, Neon의 Actions 실행 기록), 실행 상세의 단계별 요약, '지금 실행'(202, 실행 중이면 409) | 서버가 안 뜨면 실행 이력 스크린샷 |
+| 8 | GitHub Actions `etl` | 3시간마다 예약 실행(발표 +20분) → Neon → 공개 버킷 → 공개 팩 검사. 매일 천문 자료와 `pg_dump` 백업(아티팩트 7일) | 최근 성공한 실행 화면 |
+| 9 | 아키텍처 한 장 | GitHub Actions(CI·예약 ETL) → Spring Boot 배치(Valkey/Redis, QueryDSL) → Neon PostgreSQL 18 → Neon Object Storage 공개 버킷 → iOS. 관리자: Bootstrap + JWT(로컬). 비용 0원(ADR-017) | — |
 | 10 | 로드맵 | 결정 홈, 적중률, 명소, AR 스파이크 10/26 | — |
 
 ## 질문 대비
 
-- **왜 RDS가 아닌가**: 무과금 원칙(ADR-016). 운영·시연 모두 Neon Free PostgreSQL 18이다. `DB_URL`만 바꾸면 RDS for PostgreSQL 18로 옮길 수 있게 마이그레이션은 슈퍼유저 아닌 소유자로 실행하고 테스트로 보장한다.
-- **앱이 서버 DB를 직접 읽는가**: 아니다. 앱은 CloudFront의 정적 팩만 받는다. EC2·DB가 멈춰도 마지막 팩으로 동작한다(D8).
-- **관리자 화면은 어떻게 보호되나**: CloudFront 경유 요청은 `/api/health`·`/api/v1/**`·`/ws/v1/**`만 통과한다(X-Origin-Verify). 관리자 경로는 SSM 터널(루프백)에서만 열리고, API는 JWT가 필요하다.
+- **왜 AWS·RDS가 아닌가**: 무과금 원칙(ADR-016·017). 상시 서버 없이 GitHub Actions가 ETL을 돌리고, Neon Free가 DB와 공개 버킷을 맡는다. 한도를 넘어도 결제 수단이 없어 과금 대신 멈춘다. `DB_URL`만 바꾸면 다른 PostgreSQL 18로 옮길 수 있다(마이그레이션은 슈퍼유저 아닌 소유자로 실행, 테스트로 보장).
+- **앱이 서버 DB를 직접 읽는가**: 아니다. 앱은 공개 버킷의 정적 팩만 받는다. ETL·DB가 멈춰도 마지막 팩과 기기 계산으로 동작한다(D8).
+- **관리자 화면은 어떻게 보호되나**: 공개 서버가 없다. 관리 서버는 Mac에서만 뜨고 루프백 요청만 받으며(`LocalOnlyFilter`), 관리자 API는 JWT가 필요하다.

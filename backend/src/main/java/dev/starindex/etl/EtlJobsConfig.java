@@ -58,7 +58,8 @@ public class EtlJobsConfig {
     /** The Neon Object Storage bucket when PACK_BUCKET is set (GitHub Actions ETL, ADR-017), a local directory otherwise. */
     @Bean
     PackStore packStore(EtlProperties.Pack pack) {
-        return pack.usesS3() ? S3PackStore.create(pack.s3Bucket(), pack.s3Endpoint(), pack.s3Region())
+        return pack.usesS3() ? S3PackStore.create(pack.s3Bucket(), pack.s3Endpoint(), pack.s3Region(),
+                        pack.s3AccessKeyId(), pack.s3SecretAccessKey())
                 : new LocalPackStore(Path.of(pack.localDir()));
     }
 

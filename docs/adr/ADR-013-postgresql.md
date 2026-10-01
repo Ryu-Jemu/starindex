@@ -1,6 +1,7 @@
 # ADR-013: 데이터베이스를 MySQL 8.4에서 PostgreSQL 18로 바꾼다
 
 - 상태: 채택 (2026-09-30, 사용자 결정)
+- 갱신(2026-10-01): 운영 DB는 Neon Free(ADR-015), RDS 미사용(ADR-016), AWS 미사용(ADR-017). 이 ADR의 EC2·RDS·S3 언급은 기록이다.
 - 대체: PLAN rev4의 "RDS MySQL 8.4"(3.4, 3.6), ADR-004의 flyway-mysql·mysql-connector-j
 
 ## 배경

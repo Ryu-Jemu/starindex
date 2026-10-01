@@ -1,0 +1,57 @@
+# ADR-017: AWS를 쓰지 않는다 — GitHub Actions 예약 ETL + Neon(DB·Object Storage), 무과금
+
+- 상태: 채택 (2026-10-01, 사용자 결정)
+- 대체: PLAN 3.5(CloudFront, CI/CD의 CodeDeploy, IAM, CloudWatch 알람), 3.6의 AWS 비용, W3의 "AWS 일괄"과 완료 기준 ①②⑤, 8장의 AWS 사용자 조치, ADR-015 결정 4·7(EC2·S3 백업), DB-PLAN 11.3~11.6의 EC2 절차, D8·D10·D11·D12의 AWS 부분
+- 유지: Neon Free PostgreSQL 18(ADR-015·016), 보관 2일(ADR-014), 팩 스키마·경로(PLAN 3.4), 앱 D4(위치는 기기 밖으로 나가지 않음)
+
+## 배경
+
+- 10/1 사용자 지시
+  - "AWS는 작업하지 않는다." 범위를 물었더니 **프로젝트에서 AWS를 제거**하는 쪽을 골랐다. 이미 커밋한 AWS 코드도 걷어 낸다.
+  - "밤하늘 별 보는 작업을 모바일에서 진행 가능하도록 하며 무과금으로 충분히 수행할 수 있도록 해야 한다."
+- 별 보기(스카이뷰, 해질녘 재생, 천체 상세와 뜸·남중·짐)는 처음부터 기기 안에서만 계산한다. 서버가 필요한 것은 '오늘 밤 지수' 칩 하나다.
+- 지수 ETL을 어디서 돌릴지 세 안(GitHub Actions 예약 실행 / Mac / 지수 칩 제외)을 비교했고, 사용자는 **GitHub Actions 예약 실행**을 골랐다.
+
+## 결정
+
+1. AWS 계정의 자원(EC2, S3, CloudFront, CodeDeploy, IAM, CloudWatch, SSM, Budgets)을 만들지 않는다. 관련 코드·스크립트·워크플로를 저장소에서 지웠다(커밋 445a063).
+2. ETL은 `.github/workflows/etl.yml`이 GitHub 호스트 러너에서 돌린다.
+   - 단기예보 발표 +20분(02·05·…·23시 KST): `forecastPipelineJob`
+   - 매일 00:40 KST: `astroDailyJob`(보존 정리 + 천문연 출몰), `astroEventsJob`(천문현상), `pg_dump` 백업(아티팩트 7일)
+   - 실행마다 백엔드 jar를 배치 모드로 한 번 띄운다. jar는 백엔드가 바뀔 때만 다시 빌드한다(캐시).
+3. DB는 Neon Free PostgreSQL 18(`star_index`, 싱가포르)이다.
+4. 앱 팩은 **Neon Object Storage `public_read` 버킷**에 둔다(같은 Neon 프로젝트·브랜치).
+   - 서버는 S3 호환 API로 쓴다. 쓰기는 path-style이고, 체크섬은 필요할 때만 붙인다.
+   - 앱은 익명 HTTPS로 `packs/manifest/latest.json`과 팩을 받는다.
+   - 경로·Cache-Control·sha256 규칙은 PLAN 3.4 그대로다.
+5. 상시 서버가 없다. Spring Boot 웹 서버는 운영자의 Mac에서만 띄우는 관리 도구다. 루프백 요청만 받고(`LocalOnlyFilter`), 관리자 화면은 `http://localhost:8080/admin`이다.
+6. 공개 WebSocket 실시간 알림은 없다. 앱은 manifest를 활성화 시와 120초마다 확인한다(T19 5분 안). `/ws/v1/live`와 Redis Pub/Sub 코드는 로컬 서버용으로 남긴다.
+7. 비밀은 GitHub Actions secrets에 둔다: `DB_URL`, `DB_PASSWORD`, `DATA_GO_KR_SERVICE_KEY`, `NEON_STORAGE_KEY_ID`, `NEON_STORAGE_SECRET`. 버킷 이름·엔드포인트·공개 URL은 variables에 둔다.
+   - S3 SDK의 변수 이름(`AWS_ACCESS_KEY_ID` 등)을 쓰지만 값은 Neon storage credential이다. AWS 계정은 관여하지 않는다.
+
+## 비용 (모두 0원, 한도를 넘어도 과금되지 않는 조건)
+
+| 자원 | 무료 한도 [확실, 공식 문서 2026-10-01] | 예상 사용 [추정] | 넘으면 |
+|---|---|---|---|
+| GitHub Actions(비공개 저장소, GitHub Free) | Linux 월 2,000분 | ETL 약 600분 + CI | 결제 수단이 없으면 **실행만 막힌다**(과금 없음) |
+| GitHub 아티팩트·캐시 저장 | 아티팩트 500MB, 캐시 저장소당 10GB | 덤프 수 MB × 7일, jar 캐시 약 90MB | 결제 수단이 없으면 막힌다(과금 없음) |
+| Neon PostgreSQL | 월 100 CU-시간, 0.5GB | 실행당 약 6분 깨어 있음 → 월 약 7 CU-시간 | 다음 달까지 컴퓨트 정지(앱은 마지막 팩으로 동작) |
+| Neon Object Storage | 5GB, 전송은 DB와 합쳐 월 5GB | 팩 1.5KB, manifest 0.4KB, 앱이 2분마다 조건부 GET | 전송 한도 초과 시 Neon 정책을 따름. 첫 주 Usage를 확인한다 |
+
+- 출처: GitHub Actions 과금(docs.github.com/en/billing/concepts/product-billing/github-actions), schedule 이벤트(docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows), Neon 플랜(neon.com/docs/introduction/plans), Object Storage(neon.com/docs/storage/overview, buckets, s3-compatibility, authentication)
+
+## 결과
+
+- 좋아지는 점: 고정 비용 0원, 상시 서버 운영 없음, 앱은 DB·서버가 멈춰도 마지막 팩과 기기 계산으로 동작한다.
+- 잃는 것과 위험
+
+| 항목 | 내용 | 대응 |
+|---|---|---|
+| 과제 고정 스택 | GitHub Actions → S3 → CodeDeploy → EC2, RDS, Redis, WebSocket이 운영 경로에서 빠진다. GitHub Actions, Spring Boot(배치), Redis 호환(Valkey), JWT·QueryDSL·Bootstrap(로컬 관리자), WebSocket(로컬)은 남는다 | 평가 기준이 AWS 배포를 요구하면 감점될 수 있다 [불확실]. 발표에서 무과금 원칙과 대체 구성을 설명한다 |
+| 예약 실행 지연 | GitHub는 부하가 클 때 schedule을 늦출 수 있다(정각이 가장 심함). 그래서 :20에 돌린다 | 공개 팩 검사가 6시간(발표 2번)을 넘으면 실패하고, 실패하면 GitHub가 메일을 보낸다 |
+| 비공개 저장소 분 한도 | 2,000분을 넘으면 그달 남은 ETL이 멈춘다 | jar 캐시, 미설정 시 즉시 종료. 저장소를 공개하면 무제한이지만 사용자가 정할 일이다 |
+| Neon Object Storage | 공개 URL에 CDN이 없다(싱가포르에서 직접 받음). 수명주기 규칙은 저장만 되고 적용되지 않는다 | 팩이 작아 지연이 문제되지 않는다(추정). 오래된 팩은 보존 정리 Job이 직접 지운다 |
+| 백업 | S3 대신 GitHub 아티팩트(7일) | 복원은 `ops/neon/restore.sh`로 새 DB에 한다 |
+
+- 검증(10-01): 백엔드 83/83, Neon 운영 스크립트 대역 34/34(`scripts/neon-ops-check.sh`), 로컬 끝단(`scripts/etl-local-e2e.sh`: 가짜 data.go.kr → 워크플로와 같은 jar 실행 → S3 호환 버킷 → 익명 읽기 검사 → 시뮬레이터 칩 표시).
+- 실제 Neon 버킷·자격 증명·시크릿 설정은 사용자 확인 뒤 진행한다(`docs/ETL.md` 무과금 운영).

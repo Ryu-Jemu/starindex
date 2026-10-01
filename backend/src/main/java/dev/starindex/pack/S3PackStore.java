@@ -1,5 +1,7 @@
 package dev.starindex.pack;
 
+import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
+import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.core.checksums.RequestChecksumCalculation;
 import software.amazon.awssdk.core.checksums.ResponseChecksumValidation;
 import software.amazon.awssdk.core.sync.RequestBody;
@@ -37,13 +39,17 @@ public class S3PackStore implements PackStore {
     /**
      * Client for an S3-compatible endpoint (Neon Object Storage; S3Mock in tests): path-style addressing (Neon supports
      * nothing else), and checksums only where the S3 API requires them (recent SDKs add CRC trailers to every upload
-     * by default, which compatible servers do not all accept). Credentials come from the SDK's default chain:
-     * AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY hold a Neon storage credential (token_id / s3_secret_access_key).
+     * by default, which compatible servers do not all accept). Credentials: the given key pair (Spring properties,
+     * e.g. backend/.env), else the SDK's default chain (environment variables in GitHub Actions). Either way the pair
+     * is a Neon storage credential (token_id / s3_secret_access_key), not an AWS key.
      */
-    public static S3PackStore create(String bucket, String endpoint, String region) {
+    public static S3PackStore create(String bucket, String endpoint, String region, String keyId, String secret) {
         if (endpoint == null || endpoint.isBlank())
             throw new IllegalStateException("PACK_BUCKET is set but AWS_ENDPOINT_URL_S3 (the storage endpoint) is empty");
-        S3Client client = S3Client.builder().region(Region.of(region)).endpointOverride(URI.create(endpoint))
+        var builder = S3Client.builder();
+        if (keyId != null && !keyId.isBlank() && secret != null && !secret.isBlank())
+            builder.credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create(keyId, secret)));
+        S3Client client = builder.region(Region.of(region)).endpointOverride(URI.create(endpoint))
                 .forcePathStyle(true).httpClient(UrlConnectionHttpClient.create())
                 .requestChecksumCalculation(RequestChecksumCalculation.WHEN_REQUIRED)
                 .responseChecksumValidation(ResponseChecksumValidation.WHEN_REQUIRED)

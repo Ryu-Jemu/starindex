@@ -13,8 +13,8 @@
 ## 결정
 
 1. 운영 DB와 시연 DB 모두 Neon Free(`star_index`, PostgreSQL 18, aws-ap-southeast-1)다. RDS 인스턴스는 어느 단계에서도 만들지 않는다.
-2. S3는 DB 용도가 아니다. 앱 팩(`packs/`), CodeDeploy 번들(`deploy/backend/`), 매일 `pg_dump`(`backup/db/`)만 둔다.
-3. 배포 정의(`deploy/aws/starindex.yaml`)와 프로비저닝 스크립트에는 RDS 자원이 없다.
+2. ~~S3는 DB 용도가 아니다. 앱 팩, CodeDeploy 번들, 매일 `pg_dump`만 둔다.~~ → ADR-017(같은 날): AWS 자체를 쓰지 않는다. 팩은 Neon Object Storage 공개 버킷, 백업은 GitHub 아티팩트다.
+3. RDS 자원은 어디에도 없다.
 
 ## 결과
 

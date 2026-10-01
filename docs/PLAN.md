@@ -1,5 +1,7 @@
 # 오늘 밤 별 지수: 스카이뷰 + 하늘색 변화 + Unity AR, 최소 비용 작업 계획 (rev4, 2026-09-29)
 
+> **2026-10-01 변경 2 (ADR-017, 사용자 결정): AWS를 쓰지 않는다. 전부 무과금이다.** 별 보기(스카이뷰·해질녘 재생·천체 상세)는 기기 안에서만 계산한다. '오늘 밤 지수' ETL은 **GitHub Actions 예약 실행**(`.github/workflows/etl.yml`)이 Neon Free PostgreSQL에 수집하고, 팩은 **Neon Object Storage 공개 버킷**에 올린다. 앱은 HTTPS로 manifest를 2분마다 확인한다. 상시 서버는 없고, 관리자 화면은 Mac 로컬(`http://localhost:8080/admin`)에서 연다. 그래서 아래의 CloudFront·EC2·CodeDeploy·IAM·CloudWatch·SSM·Budgets 내용(D8·D10·D11·D12의 AWS 부분, 3.5, 3.6의 AWS 행, W3 "AWS 일괄", 8장 2번)은 기록으로만 남긴다. 운영 절차는 `docs/ETL.md` 8절이다.
+
 > **2026-09-30·10-01 변경:** DB는 PostgreSQL 18이다(ADR-013). 운영 DB는 **Neon Free**(관리형 PostgreSQL 18, AWS ap-southeast-1 싱가포르, TLS, direct 엔드포인트)다(ADR-015, `docs/DB-PLAN.md` 11). ADR-014의 "앱 EC2에 직접 설치"를 대체하고, ADR-014의 보관 결정은 그대로 둔다. EC2에는 JVM과 Valkey만 돈다. **RDS는 시연에도 쓰지 않는다(ADR-016, 10-01 사용자 결정: DB는 Neon 무과금).** 다른 PostgreSQL 18로 옮길 일이 생기면 `DB_URL`만 바꾼다. 보관은 기본 2일이고 예외는 `docs/DB-PLAN.md` 2장을 따른다. ETL 사용법은 `docs/ETL.md`.
 
 
@@ -225,7 +227,9 @@ docs/       adr/, ATTRIBUTION.md, review-notes.md, verification/, demo-script.md
   - 레코드: f32×3, i16(등급×100), u8(B−V), u16(HR), i32(이름 인덱스)
   - 크기: ≤1MB(추정)
 
-### 3.5 CloudFront, 웹, CI/CD, IAM, 모니터링
+### 3.5 CloudFront, 웹, CI/CD, IAM, 모니터링 (폐지: ADR-017)
+
+> **현재 구성(ADR-017):** 팩은 Neon Object Storage `public_read` 버킷(`<엔드포인트>/starindex-packs/packs/…`)에 있다. CI는 `backend.yml`(테스트만), ETL은 `etl.yml`(예약 실행)이다. 실패 알림은 GitHub 메일과 공개 팩 신선도 검사(`scripts/check-public-pack.py`, 6시간)가 맡는다. 관리자 웹(Bootstrap)은 Mac 로컬에서 루프백 요청만 받는다(`LocalOnlyFilter`). 아래는 AWS 설계 기록이다.
 - **CloudFront 배포 1개**(PAYG, `*.cloudfront.net`, HTTPS only). 동작 순서는 다음과 같다.
   1. `/packs/manifest/*` → S3(OAC), 캐시 정책 Min 0, Default 60, Max 300초
   2. `/packs/*`, `/legal/*` → S3(OAC), CachingOptimized
@@ -252,6 +256,8 @@ docs/       adr/, ATTRIBUTION.md, review-notes.md, verification/, demo-script.md
   - health-cron은 쓰지 않는다.
 
 ### 3.6 비용 최소화 (서울, 부가세 10% 별도)
+
+> **현재(ADR-017): 0원.** GitHub Actions 비공개 저장소 월 2,000분(결제 수단 없음 → 초과 시 실행만 막힘), Neon Free(DB 월 100 CU-시간·0.5GB, Object Storage 5GB, 전송 월 5GB). 아래 AWS 표는 기록이다. 한도와 예상 사용량은 ADR-017 비용 표.
 **원칙**
 1. 개발은 로컬 docker-compose로 한다.
 2. AWS는 필요한 기간에만 쓴다. EC2는 W3부터 24/7로 켠다. DB(PostgreSQL 18)는 Neon Free(0 USD)에 둔다(ADR-015). **RDS는 시연에도 쓰지 않는다(ADR-016).**
@@ -433,7 +439,7 @@ docs/       adr/, ATTRIBUTION.md, review-notes.md, verification/, demo-script.md
 |---|---|---|
 | W1 | 사용자 조치 0.5 · git/번들 ID/ADR-004 0.5 · catalog-builder(한글명은 d3 `ko`를 잠정 사용하고 R1에서 검수) 1.0 · SkyCore 계산(C 벤더링, AstroEngine, R, 굴절, Ephemeris, RiseSet, Projector, AzimuthCorrection, FrameTransform, DeclinationTable) 2.5 · 하늘 모듈(SkyPhase, m_tw, SkyPalette, SkyColorModel, SunsetPlaybackPlanner) 1.5 · G1a 테스트 1.0 | **7.0** |
 | W2 | SkySensors 1.5 · SkyScreen MVP 2.5 · 셰이더와 해질녘 재생 버튼 1.0 · 실기기 스모크 0.5 · Boot 골격 1.0 · 수집 Job 2개(로컬, 교차검증 Step은 R3) 1.5 | **8.0** |
-| W3 | 발행 Job 1.5 · 앱 팩 클라이언트와 IndexChip 1.5 · AWS 일괄(EC2, Neon, S3, CloudFront, CodeDeploy, OIDC, 필터, 알람 1개) 2.5 · 관리자(JWT, 실행 이력, SSM) 1.0 · 24시간 무인 운영과 리허설 1.0 | **7.5** |
+| W3 | 발행 Job 1.5 · 앱 팩 클라이언트와 IndexChip 1.5 · 무과금 운영(GitHub Actions 예약 ETL, Neon DB·버킷, 운영 스크립트; ADR-017로 AWS 일괄 대체) 2.5 · 관리자(JWT, 실행 이력, 로컬) 1.0 · 24시간 무인 운영과 리허설 1.0 | **7.5** |
 | 합계 | | **약 22.5**(가용 평일 12일 + 주말·휴일 8일 = 최대 20) |
 
 - **해석**: 발표가 10/20이면 주말을 모두 써도 약 2.5인일이 부족하다(추정). 그래서 둘 중 하나를 택한다.
@@ -448,14 +454,14 @@ docs/       adr/, ATTRIBUTION.md, review-notes.md, verification/, demo-script.md
 3. **'해질녘 재생' 약 20초 동안 노을이 블루아워와 박명을 거쳐 밤이 되고 별이 밝은 순서로 나타난다.**
 4. **토성**(10/4 충, 저녁 동남~남쪽)을 탭해 상세를 연다.
 5. "오늘 밤 72"가 표시된다.
-6. SSM 터널로 관리자 화면에 들어가 ETL 실행 이력을 보여 준다.
-7. GitHub Actions → CodeDeploy 배포를 보여 준다.
+6. Mac 로컬 관리자 화면(`localhost:8080/admin`)에서 ETL 실행 이력(Neon)을 보여 준다.
+7. GitHub Actions의 예약 ETL 실행 기록과 공개 팩 검사를 보여 준다(ADR-017, AWS 배포 대신).
 
 | 주차 | 작업 | 완료 기준 |
 |---|---|---|
 | W1 (9/30~10/4) | **사용자 조치(8장)**. 천문연 출몰 API로 과거 locdate 1콜이 되는지 확인<br>`git init`과 private 저장소, 번들 ID, ADR-004<br>`catalog-builder` → `skypack.bin` v1(≤5.5등), T9 QA<br>SkyCore 계산과 하늘 모듈(인일표의 목록)<br>docker-compose<br>**G-E1(디스크) 판정 뒤** Unity 6.3을 배경으로 설치한다. E3/E4 판정은 R2에서 한다 | **G0**, **G1a** |
 | W2 (10/5~10/11) | SkySensors와 `SkyScreen` MVP(별·선·한글명·해달행성·HUD·라벨·탭·드래그 수동 모드)<br>**하늘 셰이더, 해질녘 재생 버튼, m_tw, 단계별 선·라벨 알파**<br>G3 스모크, T-P1·T-P5 실기기 스모크<br>Boot 4.1 골격(더미 Job을 실행하면 `BATCH_JOB_EXECUTION` 행 생성, QueryDSL 7.x Q타입 빌드)과 `forecastIngestJob`·`astroDailyJob`(**로컬**) | ① 실기기 해질녘 재생 1회(자세한 기준은 표 아래)<br>② **G3 스모크 결과 기록**(갱신 도착 여부, `CMErrorTrueNorthNotAvailable` 여부). 실패하면 cmMagnetic 폴백으로 회전 추적 시연을 확인<br>③ T-P1·T-P5 실기기 통과<br>④ 로컬 ETL 1회 성공 |
-| W3 (10/12~10/19) | `starIndexPublishJob`(17개 시·도, 72시간 SKY/PTY, kasi 시각), 앱 `IndexChip`<br>AWS 일괄(`scripts/aws-provision.sh`, Neon 프로젝트와 `bootstrap-db.sh`, RDS 없음: ADR-016)<br>관리자(JWT, 실행 이력, SSM 터널)<br>배포 동결 → 24시간 무인 운영 → 리허설 | ① CloudFront `/api/health` UP, `/ws/v1/live` 101<br>② `/backup/…`·`/deploy/…`로 S3 객체를 받을 수 없음(EC2 필터 403). 버킷 정책은 CLI 비인가 GetObject 거부로 따로 확인<br>③ **T19 통과**(발행 뒤 5분 안에 실기기 manifest 갱신)<br>④ **배포 후 연속 24시간(발표 8회) 무인 수집·발행 성공**<br>⑤ 3.6 비용 체크리스트 통과<br>⑥ RDS 인스턴스 0개 확인(ADR-016) |
+| W3 (10/12~10/19) | `starIndexPublishJob`(17개 시·도, 72시간 SKY/PTY, kasi 시각), 앱 `IndexChip`<br>무과금 운영(ADR-017): `etl.yml` 예약 실행, Neon DB(`ops/neon/bootstrap.sh`)·공개 버킷, 시크릿·변수(`docs/ETL.md` 8절)<br>관리자(JWT, 실행 이력, Mac 로컬)<br>24시간 무인 운영 → 리허설 | ① `scripts/check-public-pack.py <공개 URL>` 통과(익명 읽기, sha256, Cache-Control, 발표 6시간 이내)<br>② 버킷 쓰기는 자격 증명으로만 된다(익명 PUT 거부 확인), 서버는 루프백만 받는다(`LocalOnlyFilter`)<br>③ **T19 통과**(발행 뒤 5분 안에 실기기 manifest 갱신)<br>④ **연속 24시간(발표 8회) 예약 실행 수집·발행 성공**(Actions 기록)<br>⑤ 비용 0원 확인: Actions 사용 분, Neon CU-시간·전송량, AWS 자원 0개<br>⑥ RDS·AWS 인스턴스 0개(ADR-016·017) |
 
 W2 해질녘 재생 합격 기준
 - 알파가 0보다 큰 별은 m<m_lim인 별뿐이다.
@@ -468,8 +474,8 @@ W2 해질녘 재생 합격 기준
 - **10/8 체크포인트**(해질녘 재생이 미완이면 즉시 적용)
   - ① 해질녘 재생의 2구간 자동 배속을 고정 ×600으로 단순화한다.
   - ② 라벨 우선순위를 행성·별자리명만 남긴다.
-- **10/15 체크포인트**(AWS 배포가 미완이면 즉시 적용)
-  - ③ 알람을 Budgets만 남긴다.
+- **10/15 체크포인트**(무과금 운영 설정이 미완이면 즉시 적용)
+  - ③ (폐지: ADR-017로 알람 없음. 실패 알림은 GitHub 메일)
   - ④ 관리자 화면은 실행 이력 표만 남긴다(QueryDSL 필터 1개).
   - ⑤ `astroDailyJob`은 AE 계산만 쓰고 천문연 호출을 R3로 미룬다.
 
@@ -629,7 +635,7 @@ W2 해질녘 재생 합격 기준
 ## 8. 사용자가 직접 할 일
 0. **발표 일자·형식·필수 평가 항목을 확인한다**(M0 컷라인 결정에 필요).
 1. `sudo xcodebuild -license accept`를 실행한다.
-2. AWS(기존 계정)
+2. ~~AWS(기존 계정)~~ (폐지: ADR-017. 대신 `docs/ETL.md` 8절: Neon 버킷·자격 증명, `ops/neon/bootstrap.sh --github --save-local`, GitHub 시크릿·변수)
    - Billing에서 플랜 유형을 확인하고, **Free plan이면 즉시 Upgrade**한다. T4g 무료 체험과 크레딧 잔액도 확인한다.
    - Budgets 30 USD를 설정한다.
    - **AWS CLI v2와 Session Manager 플러그인을 설치한다**(W3 전). 로그인 순서는 다음과 같다.
@@ -644,11 +650,11 @@ W2 해질녘 재생 합격 기준
 6. (R3 전) EOG 계정을 만든다. lbsc.kr G9 질의는 W1에 발송한다(초안 제공).
 7. (W3 전) **Neon 계정과 프로젝트를 만든다**(ADR-015, `docs/DB-PLAN.md` 11.3). **완료(10-01)**: `star_index`, Postgres 18, Singapore. 실제 Neon 검증도 끝났다(DB-PLAN 11.7).
    - 컴퓨트 크기는 Free에서 바꿀 수 없다. 첫 주 CU-시간만 확인한다.
-   - 직접(pooled 아님) 연결 호스트를 `app.env`의 `DB_URL`에 넣는다.
-   - `neondb_owner` 비밀번호는 EC2에 저장하지 말고, `bootstrap-db.sh`가 물을 때 입력한다.
+   - 직접(pooled 아님) 연결 호스트를 `ops/neon/neon.env`의 `DB_URL`에 넣는다.
+   - `neondb_owner` 비밀번호는 파일에 저장하지 말고, `ops/neon/bootstrap.sh`가 물을 때 입력한다.
    - 출시 전에 Neon 약관(무료 플랜 상업적 이용)을 확인한다.
 
-도메인은 사지 않는다. 추가 유료 결제는 AWS 사용료뿐이다.
+도메인은 사지 않는다. 추가 유료 결제는 없다(ADR-017).
 
 ## Critical Files (모두 신규)
 - `ios/Packages/SkyCore/Sources/SkyCore/Transform/HorizonTransform.swift`: R 열 구성, 굴절 연속, Rz·D 조건

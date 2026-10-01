@@ -90,6 +90,8 @@ starindex:
     s3-bucket: ${PACK_BUCKET:}
     s3-endpoint: ${AWS_ENDPOINT_URL_S3:}     # https://br-<branch>.storage.c-<N>.aws-ap-southeast-1… (path-style only)
     s3-region: ${AWS_REGION:ap-southeast-1}
+    s3-access-key-id: ${AWS_ACCESS_KEY_ID:}
+    s3-secret-access-key: ${AWS_SECRET_ACCESS_KEY:}
   admin:
     username: ${ADMIN_USERNAME:admin}
     # bcrypt ($2a$/$2b$/$2y$). Empty → admin login answers 503.

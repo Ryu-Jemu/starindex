@@ -36,9 +36,12 @@ public final class EtlProperties {
     /**
      * @param s3Bucket   non-empty → packs go to this bucket (PACK_BUCKET; the Neon public bucket, ADR-017); empty → {@code localDir}
      * @param s3Endpoint the S3-compatible endpoint (Neon Object Storage, or S3Mock locally); path-style addressing
+     * @param s3AccessKeyId     a Neon storage credential (token_id); with the secret it overrides the SDK's default
+     *                          chain, which reads only real environment variables (backend/.env is a Spring source)
      */
     @ConfigurationProperties("starindex.pack")
-    public record Pack(String localDir, int hourlySlots, String s3Bucket, String s3Region, String s3Endpoint) {
+    public record Pack(String localDir, int hourlySlots, String s3Bucket, String s3Region, String s3Endpoint,
+                       String s3AccessKeyId, String s3SecretAccessKey) {
         public Pack {
             if (localDir == null || localDir.isBlank()) localDir = "build/packs";
             if (hourlySlots <= 0) hourlySlots = 72;

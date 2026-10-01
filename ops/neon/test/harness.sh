@@ -47,6 +47,11 @@ FIXED="fixed-$(openssl rand -hex 16)"
 check "bootstrap again with APP_DB_PASSWORD (idempotent, rotates)" bash -c "NEON_ADMIN_PASSWORD='$ADMIN_PW' APP_DB_PASSWORD='$FIXED' setsid bash $R/neon/bootstrap.sh > /tmp/b2.log 2>&1"
 check "a given password is not echoed" bash -c "! grep -qF '$FIXED' /tmp/b2.log && grep -q 'APP_DB_PASSWORD you gave' /tmp/b2.log"
 check "rotated password works, old one does not" bash -c "PGPASSWORD='$FIXED' psql 'host=$HOST user=starindex dbname=starindex sslmode=require' -tAc 'select 1' >/dev/null && ! PGPASSWORD='$APP_PW' psql 'host=$HOST user=starindex dbname=starindex sslmode=require' -tAc 'select 1' >/dev/null 2>&1"
+printf 'DATA_GO_KR_SERVICE_KEY=keep-me\nDB_URL=old\n' > /tmp/local.env
+check "--save-local writes backend/.env keys (0600), keeps other lines" bash -c "LOCAL_ENV=/tmp/local.env NEON_ADMIN_PASSWORD='$ADMIN_PW' APP_DB_PASSWORD='$FIXED' setsid bash $R/neon/bootstrap.sh --save-local > /tmp/b3.log 2>&1 \
+  && grep -qx 'DATA_GO_KR_SERVICE_KEY=keep-me' /tmp/local.env && grep -qx 'DB_PASSWORD=$FIXED' /tmp/local.env && grep -qx 'DB_USERNAME=starindex' /tmp/local.env \
+  && test \"\$(grep -c '^DB_URL=' /tmp/local.env)\" = 1 && grep -q '^DB_URL=jdbc:postgresql://$HOST/starindex?sslmode=require&channelBinding=require$' /tmp/local.env \
+  && test \"\$(stat -c %a /tmp/local.env)\" = 600 && ! grep -qF '$FIXED' /tmp/b3.log"
 check "short APP_DB_PASSWORD refused" bash -c "! NEON_ADMIN_PASSWORD='$ADMIN_PW' APP_DB_PASSWORD=short bash $R/neon/bootstrap.sh >/dev/null 2>&1"
 check "pooled endpoint refused" bash -c "DB_URL='jdbc:postgresql://ep-x-pooler.neon.tech/starindex?sslmode=require' NEON_ADMIN_PASSWORD=x bash $R/neon/bootstrap.sh 2>&1 | grep -q 'without -pooler'"
 check "plaintext DB_URL refused" bash -c "DB_URL='jdbc:postgresql://$HOST/starindex?sslmode=disable' NEON_ADMIN_PASSWORD=x bash $R/neon/bootstrap.sh 2>&1 | grep -q 'must require TLS'"
