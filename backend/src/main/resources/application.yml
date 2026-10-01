@@ -38,6 +38,9 @@ spring:
 
 server:
   port: 8080
+  # OriginVerifyFilter trusts only the TCP peer address: X-Forwarded-* must never be honoured (Boot could otherwise
+  # auto-enable it on some platforms), or a forged header could pose as the loopback SSM tunnel.
+  forward-headers-strategy: none
   tomcat:
     use-relative-redirects: true
 
@@ -81,3 +84,25 @@ starindex:
   pack:
     local-dir: ${PACK_LOCAL_DIR:build/packs}
     hourly-slots: 72
+    # EC2: the bucket behind CloudFront (S3_BUCKET in app.env). Empty → local-dir (development, tests, ec2sim).
+    s3-bucket: ${S3_BUCKET:}
+    s3-region: ${AWS_REGION:ap-northeast-2}
+  metrics:
+    enabled: ${METRICS_ENABLED:false}   # StarIndex/PackAgeMinutes to CloudWatch every 5 min (EC2 only)
+    region: ${AWS_REGION:ap-northeast-2}
+  security:
+    # The value CloudFront sends as X-Origin-Verify (SSM /starindex/cloudfront/origin-verify via start.sh).
+    # Empty → nothing through CloudFront is accepted; loopback still is (local development, SSM tunnel).
+    origin-verify-secret: ${ORIGIN_VERIFY_SECRET:}
+  admin:
+    username: ${ADMIN_USERNAME:admin}
+    # bcrypt ($2a$/$2b$/$2y$), SSM /starindex/admin/password-hash. Empty → admin login answers 503.
+    # Local: htpasswd -nbBC 12 "" '<password>' | tr -d ':\n'  → ADMIN_PASSWORD_HASH=... in backend/.env
+    password-hash: ${ADMIN_PASSWORD_HASH:}
+    # base64 ≥32 bytes, SSM /starindex/admin/jwt-secret. Empty → random per process (tokens die on restart).
+    jwt-secret: ${ADMIN_JWT_SECRET:}
+    token-ttl: 1h
+    max-failures: 5
+    lockout: 15m
+  ws:
+    max-sessions: 500

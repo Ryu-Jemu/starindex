@@ -33,11 +33,18 @@ public final class EtlProperties {
 
     public record Schedule(boolean enabled) {}
 
+    /**
+     * @param s3Bucket   non-empty → packs go to this bucket (EC2: S3_BUCKET in app.env); empty → {@code localDir}
+     * @param s3Endpoint only for tests against an S3-compatible server (path-style addressing); empty in production
+     */
     @ConfigurationProperties("starindex.pack")
-    public record Pack(String localDir, int hourlySlots) {
+    public record Pack(String localDir, int hourlySlots, String s3Bucket, String s3Region, String s3Endpoint) {
         public Pack {
             if (localDir == null || localDir.isBlank()) localDir = "build/packs";
             if (hourlySlots <= 0) hourlySlots = 72;
+            if (s3Region == null || s3Region.isBlank()) s3Region = "ap-northeast-2";
         }
+
+        public boolean usesS3() { return s3Bucket != null && !s3Bucket.isBlank(); }
     }
 }

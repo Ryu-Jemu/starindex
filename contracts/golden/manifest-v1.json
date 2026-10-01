@@ -1,0 +1,14 @@
+{
+  "schema" : 1,
+  "generatedAt" : "2026-10-12T17:21:04+09:00",
+  "packs" : {
+    "index" : {
+      "version" : "20261012-1700-b2a3bf8b",
+      "path" : "packs/index/20261012-1700-b2a3bf8b/index.json.gz",
+      "sha256" : "9a8e803b34fdf613519ac6002c804b590fcf3dcb55d1977f8f860ece5c8bf565",
+      "bytes" : 1477,
+      "nightDate" : "2026-10-12",
+      "issuedAt" : "2026-10-12T17:00+09:00"
+    }
+  }
+}

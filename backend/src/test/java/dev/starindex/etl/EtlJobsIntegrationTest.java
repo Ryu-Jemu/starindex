@@ -220,6 +220,32 @@ class EtlJobsIntegrationTest extends IntegrationTestBase {
         assertTrue(json.contains("\"tmp\":[null,null,null,null,null,null,14.0,"), "slots before 18:00 are null; TMP keeps one decimal");
         assertTrue(json.contains("1.8"), "WSD 1.8 printed exactly");
         assertEquals(PACK_JSON_GOLDEN_SHA256, PackWriter.sha256(json.getBytes(StandardCharsets.UTF_8)), json.substring(0, 400));
+        assertMatchesContract(json, packStore.get(manifestField("/packs/index/path")).orElseThrow());
+    }
+
+    /**
+     * contracts/golden/ is the app-facing contract: SkyCore's IndexPack tests decode these exact files. Regenerate with
+     * {@code UPDATE_GOLDEN=1 ./gradlew test --tests '*EtlJobsIntegrationTest.packJsonIsUnchangedByStorageChanges'}.
+     */
+    void assertMatchesContract(String json, byte[] gz) throws Exception {
+        Path dir = Path.of("../contracts/golden");
+        Path packJson = dir.resolve("index-pack-v2.json"), packGz = dir.resolve("index-pack-v2.json.gz"),
+                manifest = dir.resolve("manifest-v1.json");
+        // generatedAt is the publish wall clock; the contract file carries a fixed one.
+        var mapper = JsonMapper.builder().build();
+        var m = (tools.jackson.databind.node.ObjectNode) mapper.readTree(packStore.get(PackPublisher.MANIFEST_PATH).orElseThrow());
+        m.put("generatedAt", "2026-10-12T17:21:04+09:00");
+        String manifestJson = mapper.writerWithDefaultPrettyPrinter().writeValueAsString(m) + "\n";
+        if (System.getenv("UPDATE_GOLDEN") != null) {
+            Files.createDirectories(dir);
+            Files.writeString(packJson, json);
+            Files.write(packGz, gz);
+            Files.writeString(manifest, manifestJson);
+        }
+        assertEquals(Files.readString(packJson), json, "contracts/golden/index-pack-v2.json");
+        assertEquals(json, PackPublisher.gunzipToString(Files.readAllBytes(packGz)), "contracts/golden/index-pack-v2.json.gz");
+        assertEquals(Files.readString(manifest), manifestJson, "contracts/golden/manifest-v1.json");
+        assertEquals(PackWriter.sha256(gz), m.at("/packs/index/sha256").asString());
     }
 
     @Test

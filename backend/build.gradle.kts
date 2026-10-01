@@ -14,6 +14,7 @@ java {
 repositories { mavenCentral() }
 
 val querydslVersion = "7.7"   // OpenFeign fork (ADR-004); 7.6 is the fallback if 7.7 misbehaves
+val awsSdkVersion = "2.55.9"
 
 dependencies {
     implementation("org.springframework.boot:spring-boot-starter-webmvc")
@@ -24,6 +25,21 @@ dependencies {
     implementation("org.flywaydb:flyway-database-postgresql")   // Flyway 10+: PostgreSQL support lives in this module
     implementation("org.springframework.boot:spring-boot-starter-data-redis")
     implementation("org.springframework.boot:spring-boot-starter-actuator")
+    // Admin API only (PLAN D11): HS256 JWT issued by /api/admin/auth/login, verified by the resource server.
+    implementation("org.springframework.boot:spring-boot-starter-security-oauth2-resource-server")
+
+    // S3 packs + CloudWatch PackAgeMinutes (PLAN 3.4/3.5). The JDK URLConnection client instead of Apache/Netty:
+    // a handful of calls per hour on a 2 GB instance does not need a connection-pooling HTTP stack.
+    implementation(platform("software.amazon.awssdk:bom:$awsSdkVersion"))
+    implementation("software.amazon.awssdk:s3") {
+        exclude(group = "software.amazon.awssdk", module = "apache-client")
+        exclude(group = "software.amazon.awssdk", module = "netty-nio-client")
+    }
+    implementation("software.amazon.awssdk:cloudwatch") {
+        exclude(group = "software.amazon.awssdk", module = "apache-client")
+        exclude(group = "software.amazon.awssdk", module = "netty-nio-client")
+    }
+    implementation("software.amazon.awssdk:url-connection-client")
 
     implementation("io.github.openfeign.querydsl:querydsl-jpa:$querydslVersion")
     annotationProcessor("io.github.openfeign.querydsl:querydsl-apt:$querydslVersion:jpa")
@@ -37,6 +53,9 @@ dependencies {
 
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testImplementation("org.springframework.boot:spring-boot-starter-batch-jdbc-test")
+    testImplementation("org.springframework.boot:spring-boot-starter-webmvc-test")
+    testImplementation("org.springframework.boot:spring-boot-starter-security-test")
+    testImplementation("org.testcontainers:testcontainers-minio")   // S3PackStore against an S3-compatible server
     testImplementation("org.springframework.boot:spring-boot-testcontainers")
     testImplementation("org.testcontainers:testcontainers-postgresql")
     // Pinned: Maven Central's "latest" is a 4.0.0 beta. Standalone jar shades Jetty (no clash with Boot's Jetty BOM).

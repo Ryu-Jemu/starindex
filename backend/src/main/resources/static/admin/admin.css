@@ -1,0 +1,3 @@
+.login-box { max-width: 22rem; margin-top: 10vh; }
+#runs tr { cursor: pointer; }
+.summary { white-space: pre-wrap; font-family: var(--bs-font-monospace); font-size: .8rem; }

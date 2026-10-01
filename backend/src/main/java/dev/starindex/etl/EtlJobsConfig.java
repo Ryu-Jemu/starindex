@@ -8,6 +8,7 @@ import dev.starindex.index.IndexService;
 import dev.starindex.pack.LocalPackStore;
 import dev.starindex.pack.PackPublisher;
 import dev.starindex.pack.PackStore;
+import dev.starindex.pack.S3PackStore;
 import org.springframework.batch.core.ExitStatus;
 import org.springframework.batch.core.job.Job;
 import org.springframework.batch.core.job.builder.JobBuilder;
@@ -25,6 +26,11 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.transaction.PlatformTransactionManager;
 
+import software.amazon.awssdk.http.urlconnection.UrlConnectionHttpClient;
+import software.amazon.awssdk.regions.Region;
+import software.amazon.awssdk.services.s3.S3Client;
+
+import java.net.URI;
 import java.nio.file.Path;
 import java.time.LocalDate;
 import java.time.YearMonth;
@@ -54,9 +60,14 @@ import java.util.stream.Collectors;
 public class EtlJobsConfig {
     private final PlatformTransactionManager noTx = new ResourcelessTransactionManager();
 
+    /** S3 on EC2 (credentials: the instance role through IMDSv2), a local directory everywhere else. */
     @Bean
     PackStore packStore(EtlProperties.Pack pack) {
-        return new LocalPackStore(Path.of(pack.localDir()));
+        if (!pack.usesS3()) return new LocalPackStore(Path.of(pack.localDir()));
+        var b = S3Client.builder().region(Region.of(pack.s3Region())).httpClient(UrlConnectionHttpClient.create());
+        if (pack.s3Endpoint() != null && !pack.s3Endpoint().isBlank())
+            b.endpointOverride(URI.create(pack.s3Endpoint())).forcePathStyle(true);
+        return new S3PackStore(b.build(), pack.s3Bucket());
     }
 
     @Bean

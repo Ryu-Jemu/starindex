@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="ko" data-bs-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>별 지수 관리자</title>
+  <!-- Reached only through the SSM tunnel (http://localhost:18080/admin); CloudFront requests to /admin get 403. -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css"
+        integrity="sha384-sRIl4kxILFvY47J16cr9ZwB07vP4J8+LH7qKQnuqkuIAvNWLzeN8tE5YBujZqJLB" crossorigin="anonymous">
+  <link rel="stylesheet" href="admin.css">
+</head>
+<body>
+<nav class="navbar border-bottom px-3">
+  <span class="navbar-brand">별 지수 관리자</span>
+  <span class="d-flex gap-2 align-items-center">
+    <span id="who" class="text-secondary small"></span>
+    <button id="logout" class="btn btn-sm btn-outline-secondary d-none" type="button">로그아웃</button>
+  </span>
+</nav>
+
+<main class="container-fluid py-3">
+  <section id="login-view" class="mx-auto d-none login-box">
+    <h1 class="h5 mb-3">로그인</h1>
+    <form id="login-form" class="vstack gap-2">
+      <input id="username" class="form-control" autocomplete="username" placeholder="아이디" value="admin" required>
+      <input id="password" class="form-control" type="password" autocomplete="current-password" placeholder="비밀번호" required>
+      <button class="btn btn-primary" type="submit">로그인</button>
+      <div id="login-error" class="text-danger small" role="alert"></div>
+    </form>
+  </section>
+
+  <section id="app-view" class="d-none">
+    <div class="row g-3">
+      <div class="col-lg-8">
+        <div class="card">
+          <div class="card-header d-flex flex-wrap gap-2 align-items-center">
+            <strong class="me-auto">ETL 실행 이력</strong>
+            <select id="f-job" class="form-select form-select-sm w-auto" aria-label="Job"><option value="">모든 Job</option></select>
+            <select id="f-status" class="form-select form-select-sm w-auto" aria-label="상태">
+              <option value="">모든 상태</option>
+              <option>COMPLETED</option><option>FAILED</option><option>STARTED</option><option>STARTING</option>
+              <option>STOPPED</option><option>ABANDONED</option><option>UNKNOWN</option>
+            </select>
+            <input id="f-since" type="date" class="form-control form-control-sm w-auto" aria-label="이날 이후">
+            <select id="f-sort" class="form-select form-select-sm w-auto" aria-label="정렬">
+              <option value="NEWEST">최신순</option><option value="OLDEST">오래된순</option>
+            </select>
+            <button id="refresh" class="btn btn-sm btn-outline-light" type="button">새로고침</button>
+          </div>
+          <div class="table-responsive">
+            <table class="table table-sm table-hover mb-0 align-middle">
+              <thead><tr><th>#</th><th>Job</th><th>상태</th><th>시작</th><th class="text-end">소요</th><th>종료 코드</th></tr></thead>
+              <tbody id="runs"></tbody>
+            </table>
+          </div>
+          <div class="card-footer d-flex justify-content-between align-items-center small">
+            <span id="runs-info" class="text-secondary"></span>
+            <span class="btn-group">
+              <button id="prev" class="btn btn-sm btn-outline-secondary" type="button">이전</button>
+              <button id="next" class="btn btn-sm btn-outline-secondary" type="button">다음</button>
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-lg-4 vstack gap-3">
+        <div class="card">
+          <div class="card-header"><strong>Job 실행</strong></div>
+          <form id="run-form" class="card-body vstack gap-2">
+            <select id="run-job" class="form-select form-select-sm" aria-label="실행할 Job" required></select>
+            <div class="row g-2">
+              <div class="col-6"><input id="p-base" class="form-control form-control-sm" placeholder="base 202610121700"></div>
+              <div class="col-6"><input id="p-nightDate" class="form-control form-control-sm" placeholder="nightDate 2026-10-12"></div>
+              <div class="col-6"><input id="p-from" class="form-control form-control-sm" placeholder="from 2026-10-12"></div>
+              <div class="col-6"><input id="p-month" class="form-control form-control-sm" placeholder="month 2026-10"></div>
+            </div>
+            <button class="btn btn-sm btn-warning" type="submit">지금 실행</button>
+            <div id="run-result" class="small" role="status"></div>
+          </form>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><strong>발행 중인 팩</strong> <span class="text-secondary small">(S3 manifest)</span></div>
+          <div class="card-body small"><dl id="manifest" class="row mb-0"></dl></div>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><strong>data.go.kr 호출</strong> <span id="quota-day" class="text-secondary small"></span></div>
+          <div class="card-body small"><dl id="quota" class="row mb-0"></dl></div>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<div class="modal fade" id="run-modal" tabindex="-1" aria-labelledby="run-modal-title" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header"><h2 class="modal-title h6" id="run-modal-title"></h2>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="닫기"></button></div>
+      <div class="modal-body" id="run-modal-body"></div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/js/bootstrap.bundle.min.js"
+        integrity="sha384-FKyoEForCGlyvwx9Hj09JcYn3nv7wiPVlz7YYwJrWVcXK/BmnVDxM+D2scQbITxI" crossorigin="anonymous"></script>
+<script src="admin.js"></script>
+</body>
+</html>

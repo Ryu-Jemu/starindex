@@ -3,21 +3,16 @@ package dev.starindex.etl;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.batch.core.job.Job;
-import org.springframework.batch.core.job.parameters.JobParametersBuilder;
-import org.springframework.batch.core.launch.JobOperator;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.scheduling.annotation.Scheduled;
 
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.locks.ReentrantLock;
-
 /**
  * Production schedule (KST), enabled with ETL_SCHEDULE_ENABLED=true:
  * forecast pipeline 15 min after each 단기예보 issue (served from HH:10), KASI rise/set daily, KASI monthly data daily
- * (holidays and substitute holidays are published with a lag). A job never overlaps itself.
+ * (holidays and substitute holidays are published with a lag). A job never overlaps itself, including a run the
+ * operator started from the admin page ({@link EtlRunner}).
  */
 @Configuration
 @EnableScheduling
@@ -25,12 +20,11 @@ import java.util.concurrent.locks.ReentrantLock;
 public class EtlScheduler {
     private static final Logger log = LoggerFactory.getLogger(EtlScheduler.class);
 
-    private final JobOperator jobs;
+    private final EtlRunner runner;
     private final Job forecastPipelineJob, astroDailyJob, astroEventsJob;
-    private final Map<String, ReentrantLock> locks = new ConcurrentHashMap<>();
 
-    public EtlScheduler(JobOperator jobs, Job forecastPipelineJob, Job astroDailyJob, Job astroEventsJob) {
-        this.jobs = jobs;
+    public EtlScheduler(EtlRunner runner, Job forecastPipelineJob, Job astroDailyJob, Job astroEventsJob) {
+        this.runner = runner;
         this.forecastPipelineJob = forecastPipelineJob;
         this.astroDailyJob = astroDailyJob;
         this.astroEventsJob = astroEventsJob;
@@ -46,17 +40,6 @@ public class EtlScheduler {
     void astroEvents() { run(astroEventsJob); }
 
     void run(Job job) {
-        ReentrantLock lock = locks.computeIfAbsent(job.getName(), k -> new ReentrantLock());
-        if (!lock.tryLock()) {
-            log.warn("{} is still running; skipping this trigger", job.getName());
-            return;
-        }
-        try {
-            jobs.start(job, new JobParametersBuilder().addLong("run.at", System.currentTimeMillis()).toJobParameters());
-        } catch (Exception e) {
-            log.error("{} could not start: {}", job.getName(), e.toString());
-        } finally {
-            lock.unlock();
-        }
+        runner.runNow(job).ifPresent(e -> log.debug("{} finished: {}", job.getName(), e.getStatus()));
     }
 }
