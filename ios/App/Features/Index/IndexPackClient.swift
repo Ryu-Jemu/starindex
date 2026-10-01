@@ -46,6 +46,10 @@ struct IndexPackCache: Sendable {
     }
 
     func save(gzipped: Data, meta: Meta) throws {
+        // Same rule as load(): the version names a file in our directory, never a path.
+        guard IndexPackDecoder.isSafeRelativePath("index-\(meta.entry.version).json.gz") else {
+            throw CocoaError(.fileWriteInvalidFileName)
+        }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try gzipped.write(to: packURL(meta.entry.version), options: .atomic)
         try saveMeta(meta)

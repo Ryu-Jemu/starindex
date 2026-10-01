@@ -52,9 +52,12 @@ public class AuthController {
     public ResponseEntity<?> login(@RequestBody(required = false) Login body, HttpServletRequest req) {
         if (!props.loginEnabled())
             return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(Map.of("error", "관리자 비밀번호가 설정되지 않았습니다(ADMIN_PASSWORD_HASH)"));
+        // Count the attempt BEFORE checking it (one atomic INCR): parallel guesses cannot slip past the limit.
+        // A success clears the counter, so only failures accumulate.
         String failKey = "auth:fail:" + req.getRemoteAddr();
-        String count = redis.opsForValue().get(failKey);
-        if (count != null && Long.parseLong(count) >= props.maxFailures()) {
+        Long attempt = redis.opsForValue().increment(failKey);
+        if (attempt != null && attempt == 1) redis.expire(failKey, props.lockout());
+        if (attempt != null && attempt > props.maxFailures()) {
             return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
                     .header("Retry-After", Long.toString(props.lockout().toSeconds()))
                     .body(Map.of("error", "로그인 실패가 많아 " + props.lockout().toMinutes() + "분 동안 잠겼습니다"));
@@ -64,9 +67,7 @@ public class AuthController {
         boolean userOk = MessageDigest.isEqual(user.getBytes(StandardCharsets.UTF_8), props.username().getBytes(StandardCharsets.UTF_8));
         boolean passwordOk = bcrypt.matches(password, userOk ? props.passwordHash() : DUMMY_HASH);
         if (!userOk || !passwordOk) {
-            Long n = redis.opsForValue().increment(failKey);
-            if (n != null && n == 1) redis.expire(failKey, props.lockout());
-            log.warn("admin login failed from {} ({} in the current window)", req.getRemoteAddr(), n);
+            log.warn("admin login failed from {} ({} in the current window)", req.getRemoteAddr(), attempt);
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("error", "아이디 또는 비밀번호가 틀렸습니다"));
         }
         redis.delete(failKey);

@@ -79,7 +79,10 @@ for f in build/libs/*.jar; do
 done
 [ -n "$jar" ] || { echo "no boot jar in backend/build/libs" >&2; exit 1; }
 # shellcheck disable=SC2086  # JAVA_OPTS and params are word lists
+# Packs always go to the local directory here, whatever PACK_BUCKET the shell holds (ADR-017: the live bucket is
+# written only by the GitHub Actions ETL).
 exec java ${JAVA_OPTS:-} -jar "$jar" --spring.main.web-application-type=none --spring.main.banner-mode=off \
+  --starindex.pack.s3-bucket= \
   --spring.batch.job.enabled=true --spring.batch.job.name="$job" \
   --logging.level.root=WARN --logging.level.ETL=INFO --logging.level.io.netty.resolver.dns=ERROR \
   --logging.level.org.springframework.batch.core.step.AbstractStep=OFF $params

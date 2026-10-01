@@ -88,6 +88,14 @@ class WebSurfaceTest extends IntegrationTestBase {
     }
 
     @Test
+    void aRebindingPageIsRefusedByItsHostHeader() throws Exception {
+        mvc.perform(get("/api/health").header("Host", "attacker.example")).andExpect(status().isForbidden());
+        mvc.perform(post("/api/admin/auth/login").header("Host", "attacker.example:8080").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"username\":\"admin\",\"password\":\"x\"}")).andExpect(status().isForbidden());
+        mvc.perform(get("/api/health").header("Host", "127.0.0.1:8080")).andExpect(status().isOk());
+    }
+
+    @Test
     void unknownPathsAreDenied() throws Exception {
         mvc.perform(get("/favicon.ico")).andExpect(status().is4xxClientError());   // 401: denyAll answers through the bearer entry point
         mvc.perform(get("/api/admin/../admin/index.html")).andExpect(status().is4xxClientError());

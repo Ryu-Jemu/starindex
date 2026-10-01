@@ -27,7 +27,12 @@ work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 cp "$src" "$work/r.dump"
 # Before anything is created (and before the ERR trap): the file must be a pg_dump custom-format archive.
-(cd "$work" && pg18 pg_restore --list r.dump >/dev/null 2>&1) || die "not a pg_dump custom-format archive: $src"
+if ! listing_err="$(cd "$work" && pg18 pg_restore --list r.dump 2>&1 >/dev/null)"; then
+  case "$listing_err" in
+    *"Docker is not running"*|*"not found locally"*) die "${listing_err#error: }" ;;
+    *) die "not a pg_dump custom-format archive: $src" ;;
+  esac
+fi
 
 cleanup_failed() {
   trap - ERR

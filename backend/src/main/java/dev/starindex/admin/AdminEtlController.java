@@ -57,7 +57,8 @@ public class AdminEtlController {
 
     @GetMapping("/etl/jobs")
     public Map<String, Object> jobs() {
-        // Batch stores LocalDateTime in the writing JVM's zone (UTC for GitHub Actions runs): the page labels times.
+        // Batch stores LocalDateTime in the writing JVM's zone: Asia/Seoul on the Mac and in the Actions ETL
+        // (-Duser.timezone=Asia/Seoul). The page labels times with this server's zone.
         return Map.of("jobs", new TreeSet<>(runner.jobNames()), "params", new TreeSet<>(EtlRunner.ADMIN_PARAMS),
                 "serviceKey", dataGoKr.hasServiceKey(), "serverZone", java.time.ZoneId.systemDefault().getId());
     }

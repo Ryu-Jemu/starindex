@@ -121,6 +121,9 @@ final class IndexStore {
         let maxAge = await client.manifestMaxAge
         if !force, lastError == nil, let last = lastCheck, Date().timeIntervalSince(last) < maxAge { return }
         let result = await client.refresh()
+        // Going to the background cancels the poll and with it the request (URLError -999): not a failure to show.
+        if Task.isCancelled { return }
+        if case .failure(.network(let code)) = result, code == URLError.cancelled.rawValue { return }
         switch result {
         case .success(.unchanged(let generatedAt)):
             if var l = loaded, l.generatedAt != generatedAt {

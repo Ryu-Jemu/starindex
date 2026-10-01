@@ -27,6 +27,7 @@ import static org.junit.jupiter.api.Assertions.*;
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
         "spring.data.redis.repositories.enabled=false",
         "starindex.pack.local-dir=build/test-packs",
+        "starindex.pack.s3-bucket=",
         "management.server.port=0"})
 class LiveSocketAndPortsTest extends IntegrationTestBase {
 

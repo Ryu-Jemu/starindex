@@ -13,7 +13,7 @@ import java.time.LocalDateTime;
 
 /**
  * Read-only view of BATCH_JOB_EXECUTION for the admin run history (QueryDSL). Times are the JVM's local time, as
- * Spring Batch writes them (Asia/Seoul on the Mac, UTC on GitHub Actions runners; the page shows the server zone).
+ * Spring Batch writes them (Asia/Seoul on the Mac and in the Actions ETL, which sets -Duser.timezone=Asia/Seoul).
  */
 @Entity
 @Immutable

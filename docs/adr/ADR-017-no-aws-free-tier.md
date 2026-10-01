@@ -36,7 +36,7 @@
 | GitHub Actions(비공개 저장소, GitHub Free) | Linux 월 2,000분 | ETL 약 600분 + CI | 결제 수단이 없으면 **실행만 막힌다**(과금 없음) |
 | GitHub 아티팩트·캐시 저장 | 아티팩트 500MB, 캐시 저장소당 10GB | 덤프 수 MB × 7일, jar 캐시 약 90MB | 결제 수단이 없으면 막힌다(과금 없음) |
 | Neon PostgreSQL | 월 100 CU-시간, 0.5GB | 실행당 약 6분 깨어 있음 → 월 약 7 CU-시간 | 다음 달까지 컴퓨트 정지(앱은 마지막 팩으로 동작) |
-| Neon Object Storage | 5GB, 전송은 DB와 합쳐 월 5GB | 팩 1.5KB, manifest 0.4KB, 앱이 2분마다 조건부 GET | 전송 한도 초과 시 Neon 정책을 따름. 첫 주 Usage를 확인한다 |
+| Neon Object Storage | 5GB, 전송은 **프로젝트 단위로 DB·Object Storage가 함께** 월 5GB [확실] | 팩 1.5KB, manifest 0.4KB, 앱이 2분마다 조건부 GET(대개 304) | **그달 말까지 DB 컴퓨트 정지**(Neon plans FAQ) → 아래 위험 표 |
 
 - 출처: GitHub Actions 과금(docs.github.com/en/billing/concepts/product-billing/github-actions), schedule 이벤트(docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows), Neon 플랜(neon.com/docs/introduction/plans), Object Storage(neon.com/docs/storage/overview, buckets, s3-compatibility, authentication)
 
@@ -51,7 +51,8 @@
 | 예약 실행 지연 | GitHub는 부하가 클 때 schedule을 늦출 수 있다(정각이 가장 심함). 그래서 :20에 돌린다 | 공개 팩 검사가 6시간(발표 2번)을 넘으면 실패하고, 실패하면 GitHub가 메일을 보낸다 |
 | 비공개 저장소 분 한도 | 2,000분을 넘으면 그달 남은 ETL이 멈춘다 | jar 캐시, 미설정 시 즉시 종료. 저장소를 공개하면 무제한이지만 사용자가 정할 일이다 |
 | Neon Object Storage | 공개 URL에 CDN이 없다(싱가포르에서 직접 받음). 수명주기 규칙은 저장만 되고 적용되지 않는다 | 팩이 작아 지연이 문제되지 않는다(추정). 오래된 팩은 보존 정리 Job이 직접 지운다 |
-| 백업 | S3 대신 GitHub 아티팩트(7일) | 복원은 `ops/neon/restore.sh`로 새 DB에 한다 |
+| 백업 | S3 대신 GitHub 아티팩트(7일) | 복원은 `ops/neon/restore.sh`로 새 DB에 한다. ETL이 실패한 날에도 백업은 돈다 |
+| 전송 한도 공유 | 누군가 공개 팩 URL을 수백만 번 받으면 5GB가 소진되어 DB가 그달 말까지 멈춘다(앱은 마지막 팩으로 동작) | 정상 사용량은 매우 작다(추정). 대안: 버킷을 **별도 Neon Free 프로젝트**로 옮겨 DB와 한도를 분리한다(0원, 미적용, 사용자 결정) |
 
 - 검증(10-01): 백엔드 83/83, Neon 운영 스크립트 대역 34/34(`scripts/neon-ops-check.sh`), 로컬 끝단(`scripts/etl-local-e2e.sh`: 가짜 data.go.kr → 워크플로와 같은 jar 실행 → S3 호환 버킷 → 익명 읽기 검사 → 시뮬레이터 칩 표시).
 - 실제 Neon 버킷·자격 증명·시크릿 설정은 사용자 확인 뒤 진행한다(`docs/ETL.md` 무과금 운영).

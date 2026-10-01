@@ -13,7 +13,9 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 @SpringBootTest(properties = {
         "spring.data.redis.repositories.enabled=false",
         // Never the developer's build/packs: retention (astroDailyJob) deletes pack files it has no row for.
-        "starindex.pack.local-dir=build/test-packs"})
+        "starindex.pack.local-dir=build/test-packs",
+        // Never a real bucket either, whatever PACK_BUCKET the shell or backend/.env holds (ADR-017).
+        "starindex.pack.s3-bucket="})
 public abstract class IntegrationTestBase {
 
     @ServiceConnection

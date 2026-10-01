@@ -44,33 +44,38 @@ jobs:
       valkey:   # quota counters and job locks live for one run; Redis-compatible (ADR-005)
         image: valkey/valkey:8
         ports: ["6379:6379"]
+    # Only non-secret settings at job level. Secrets go to the one step that needs them, never to third-party
+    # actions or the Gradle build (annotation processors, plugins).
     env:
-      DB_URL: ${{ secrets.DB_URL }}
       DB_USERNAME: starindex
-      DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
-      DATA_GO_KR_SERVICE_KEY: ${{ secrets.DATA_GO_KR_SERVICE_KEY }}
       PACK_BUCKET: ${{ vars.PACK_BUCKET }}
       AWS_ENDPOINT_URL_S3: ${{ vars.PACK_S3_ENDPOINT }}
       AWS_REGION: ${{ vars.PACK_S3_REGION || 'ap-southeast-1' }}
-      AWS_ACCESS_KEY_ID: ${{ secrets.NEON_STORAGE_KEY_ID }}       # a Neon storage credential, not an AWS key
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.NEON_STORAGE_SECRET }}
       PACK_PUBLIC_URL: ${{ vars.PACK_PUBLIC_URL }}
       REDIS_HOST: 127.0.0.1
       REDIS_PORT: "6379"
     steps:
       - name: configured?
         id: cfg
+        env:   # presence only (true/false), not the values
+          HAS_DB_URL: ${{ secrets.DB_URL != '' }}
+          HAS_DB_PASSWORD: ${{ secrets.DB_PASSWORD != '' }}
+          HAS_STORAGE_KEY_ID: ${{ secrets.NEON_STORAGE_KEY_ID != '' }}
+          HAS_STORAGE_SECRET: ${{ secrets.NEON_STORAGE_SECRET != '' }}
+          HAS_SERVICE_KEY: ${{ secrets.DATA_GO_KR_SERVICE_KEY != '' }}
         run: |
           missing=""
-          for v in DB_URL DB_PASSWORD PACK_BUCKET AWS_ENDPOINT_URL_S3 AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY PACK_PUBLIC_URL; do
-            [ -n "${!v}" ] || missing="$missing $v"
+          for v in HAS_DB_URL HAS_DB_PASSWORD HAS_STORAGE_KEY_ID HAS_STORAGE_SECRET; do
+            [ "${!v}" = true ] || missing="$missing ${v#HAS_}"
           done
+          for v in PACK_BUCKET AWS_ENDPOINT_URL_S3 PACK_PUBLIC_URL; do [ -n "${!v}" ] || missing="$missing $v"; done
           if [ -n "$missing" ]; then
             echo "::notice::ETL not configured yet (missing:$missing). See docs/ETL.md, 무과금 운영."
             echo "ok=false" >> "$GITHUB_OUTPUT"
           else
             echo "ok=true" >> "$GITHUB_OUTPUT"
           fi
+          echo "key=$HAS_SERVICE_KEY" >> "$GITHUB_OUTPUT"
 
       - name: Which jobs
         if: steps.cfg.outputs.ok == 'true'
@@ -80,6 +85,7 @@ jobs:
           SCHEDULE: ${{ github.event.schedule }}
           INPUT_JOB: ${{ inputs.job }}
           INPUT_PARAMS: ${{ inputs.params }}
+          HAS_KEY: ${{ steps.cfg.outputs.key }}
         run: |
           if [ "$EVENT" = workflow_dispatch ]; then job="$INPUT_JOB"
           elif [ "$SCHEDULE" = "40 15 * * *" ]; then job=daily
@@ -91,10 +97,10 @@ jobs:
           done
           if [ "$job" = daily ]; then jobs="astroDailyJob astroEventsJob"; else jobs="$job"; fi
           # Without the data.go.kr key only the key-free work runs (retention + Astronomy Engine; index republish).
-          if [ -z "$DATA_GO_KR_SERVICE_KEY" ]; then
+          if [ "$HAS_KEY" != true ]; then
             kept=""
             for j in $jobs; do
-              case "$j" in astroDailyJob|starIndexPublishJob) kept="$kept $j" ;; *) echo "::notice::$j skipped: no DATA_GO_KR_SERVICE_KEY secret" ;; esac
+              case "$j" in astroDailyJob|starIndexPublishJob) kept="$kept $j" ;; *) echo "::warning::$j skipped: no DATA_GO_KR_SERVICE_KEY secret (the app shows no index until it is set)" ;; esac
             done
             jobs="${kept# }"
           fi
@@ -102,41 +108,56 @@ jobs:
             echo "jobs=$jobs"
             echo "params=${params# }"
             echo "backup=$([ "$job" = daily ] && echo true || echo false)"
+            # What the app sees is checked after every forecast run and once a day, so a missing key or a stalled
+            # ETL turns red at least daily (GitHub mails failed runs) instead of skipping quietly.
+            echo "check=$([ "$job" = daily ] || [[ " $jobs " == *" forecastPipelineJob "* ]] && echo true || echo false)"
           } >> "$GITHUB_OUTPUT"
           echo "jobs: ${jobs:-none} ${params}"
 
+      # Setup only when a job will run: a skipped run costs seconds, not a billed minute of Java/Gradle setup.
       - uses: actions/checkout@v7
         if: steps.cfg.outputs.ok == 'true'
       - uses: actions/setup-java@v6
-        if: steps.cfg.outputs.ok == 'true'
+        if: steps.plan.outputs.jobs != ''
         with:
           distribution: temurin
           java-version: "21"
-      # The jar is rebuilt only when the backend changes: most runs skip Gradle entirely (minutes are the budget).
+      # The jar is rebuilt only when the backend changes. restore/save are split so the jar is saved right after it
+      # is built, even if the job that follows fails (cache's post step saves only on success).
       - name: Cached jar
-        if: steps.cfg.outputs.ok == 'true'
+        if: steps.plan.outputs.jobs != ''
         id: jar
-        uses: actions/cache@v6
+        uses: actions/cache/restore@v6
         with:
           path: backend/build/etl/app.jar
           key: etl-jar-${{ hashFiles('backend/src/main/**', 'backend/build.gradle.kts', 'backend/settings.gradle.kts', 'backend/gradle/**', 'backend/libs/**') }}
       - uses: gradle/actions/setup-gradle@v6
-        if: steps.cfg.outputs.ok == 'true' && steps.jar.outputs.cache-hit != 'true'
+        if: steps.plan.outputs.jobs != '' && steps.jar.outputs.cache-hit != 'true'
       - name: Build the jar
-        if: steps.cfg.outputs.ok == 'true' && steps.jar.outputs.cache-hit != 'true'
+        if: steps.plan.outputs.jobs != '' && steps.jar.outputs.cache-hit != 'true'
         working-directory: backend
         run: |
           ./gradlew -q --no-daemon bootJar
           mkdir -p build/etl
           for f in build/libs/*.jar; do [[ "$f" == *-plain.jar ]] || cp "$f" build/etl/app.jar; done
           test -s build/etl/app.jar
+      - uses: actions/cache/save@v6
+        if: steps.plan.outputs.jobs != '' && steps.jar.outputs.cache-hit != 'true'
+        with:
+          path: backend/build/etl/app.jar
+          key: ${{ steps.jar.outputs.cache-primary-key }}
 
       - name: Run
-        if: steps.cfg.outputs.ok == 'true' && steps.plan.outputs.jobs != ''
+        if: steps.plan.outputs.jobs != ''
         working-directory: backend
         env:
           JOBS: ${{ steps.plan.outputs.jobs }}
           PARAMS: ${{ steps.plan.outputs.params }}
+          DB_URL: ${{ secrets.DB_URL }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          DATA_GO_KR_SERVICE_KEY: ${{ secrets.DATA_GO_KR_SERVICE_KEY }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.NEON_STORAGE_KEY_ID }}       # a Neon storage credential, not an AWS key
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.NEON_STORAGE_SECRET }}
         run: |
           rc=0
           for job in $JOBS; do
@@ -155,21 +176,26 @@ jobs:
 
       # What the app sees: anonymous GETs of the public bucket, sha256, gzip, freshness (two missed issues = fail).
       - name: Public pack check
-        if: steps.cfg.outputs.ok == 'true' && contains(steps.plan.outputs.jobs, 'forecastPipelineJob')
+        if: ${{ !cancelled() && steps.plan.outputs.check == 'true' }}
         run: python3 scripts/check-public-pack.py "$PACK_PUBLIC_URL" --max-age-min 360
 
       # Neon Free keeps 6 hours of history; this is the real backup (ADR-015). pg_dump must be ≥ the server (18).
+      # Runs even when an ETL job failed: a broken API must not also stop the backups.
       - name: Backup (pg_dump)
-        if: steps.cfg.outputs.ok == 'true' && steps.plan.outputs.backup == 'true'
+        if: ${{ !cancelled() && steps.plan.outputs.backup == 'true' }}
+        env:
+          DB_URL: ${{ secrets.DB_URL }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
         run: |
-          rest="${DB_URL#jdbc:postgresql://}"; host="${rest%%/*}"; db="${rest#*/}"; db="${db%%\?*}"
+          rest="${DB_URL#jdbc:postgresql://}"; hostport="${rest%%/*}"; db="${rest#*/}"; db="${db%%\?*}"
+          host="${hostport%%:*}"; port=5432; [[ "$hostport" == *:* ]] && port="${hostport##*:}"
           # The password reaches the container through the environment (-e NAME), never as an argument.
           PGPASSWORD="$DB_PASSWORD" docker run --rm -e PGPASSWORD postgres:18 pg_dump -Fc --no-tablespaces \
-            "host=${host%%:*} dbname=$db user=$DB_USERNAME sslmode=require channel_binding=require" > starindex.dump
+            "host=$host port=$port dbname=$db user=$DB_USERNAME sslmode=require channel_binding=require" > starindex.dump
           ls -l starindex.dump
           echo "BACKUP_NAME=starindex-db-$(TZ=Asia/Seoul date +%F)" >> "$GITHUB_ENV"
       - uses: actions/upload-artifact@v7
-        if: steps.cfg.outputs.ok == 'true' && steps.plan.outputs.backup == 'true'
+        if: ${{ !cancelled() && steps.plan.outputs.backup == 'true' && env.BACKUP_NAME != '' }}
         with:
           name: ${{ env.BACKUP_NAME }}
           path: starindex.dump

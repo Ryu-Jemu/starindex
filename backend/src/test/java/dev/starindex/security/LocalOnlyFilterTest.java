@@ -13,4 +13,12 @@ class LocalOnlyFilterTest {
                 "127.0.0.1.evil.com"})
             assertFalse(LocalOnlyFilter.isLoopback(a), String.valueOf(a));
     }
+
+    @Test
+    void serverNameMustBeThisMachine() {
+        for (String h : new String[]{"localhost", "127.0.0.1", "::1", "[::1]", "LOCALHOST"})
+            assertTrue(LocalOnlyFilter.isLocalServerName(h), h);
+        for (String h : new String[]{"evil.example", "localhost.evil.example", "127.0.0.1.nip.io", "[::2]", "10.0.0.1", "", null})
+            assertFalse(LocalOnlyFilter.isLocalServerName(h), String.valueOf(h));
+    }
 }

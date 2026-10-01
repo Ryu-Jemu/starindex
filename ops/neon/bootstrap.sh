@@ -27,7 +27,12 @@ echo "== role starindex and database $APP_DB (admin login)"
 load_admin_env
 psql -v ON_ERROR_STOP=1 -q -v dbname="$APP_DB" < "$here/create-db.sql"
 # stdin only: the password never appears in argv or shell history. Neon rejects pre-hashed passwords.
-printf "ALTER ROLE starindex PASSWORD '%s';\n" "${pw//\'/\'\'}" | psql -v ON_ERROR_STOP=1 -q
+# Quotes doubled with sed, not ${pw//…}: macOS /bin/bash 3.2 expands that replacement differently.
+quoted="$(printf '%s' "$pw" | sed "s/'/''/g")"
+# A failing statement must not echo the password back: errors go to /dev/null, the exit status tells.
+printf "ALTER ROLE starindex PASSWORD '%s';\n" "$quoted" | psql -v ON_ERROR_STOP=1 -q 2>/dev/null \
+  || die "ALTER ROLE starindex failed (password not shown)"
+unset quoted
 
 echo "== check as the app role"
 ( export PGUSER=starindex PGDATABASE="$APP_DB" PGPASSWORD="$pw"

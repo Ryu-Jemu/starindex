@@ -55,11 +55,16 @@ load_admin_env() {
 # the current directory is mounted for dump files).
 pg18() {
   local tool="$1"; shift
-  local major
-  major="$("$tool" --version 2>/dev/null | grep -oE '[0-9]+' | head -1)" || true
-  if [ "${major:-0}" -ge 18 ]; then "$tool" "$@"; return; fi
-  command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1 \
-    || die "$tool 18 not found locally (have ${major:-none}) and Docker is not running: start Docker Desktop"
-  docker run --rm -i -v "$PWD:/w" -w /w -e PGHOST -e PGPORT -e PGDATABASE -e PGUSER -e PGPASSWORD -e PGSSLMODE \
-    -e PGCHANNELBINDING postgres:18 "$tool" "$@"
+  local major=0 v=""
+  # No failing pipeline inside $(…): with errtrace, macOS bash 3.2 runs the caller's ERR trap there too.
+  if command -v "$tool" >/dev/null 2>&1; then v="$("$tool" --version 2>/dev/null || true)"; fi
+  if [[ "$v" =~ ([0-9]+)\. ]]; then major="${BASH_REMATCH[1]}"; fi
+  if [ "$major" -ge 18 ]; then "$tool" "$@"; return; fi
+  { command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; } \
+    || die "$tool 18 not found locally (have ${major/#0/none}) and Docker is not running: start Docker Desktop"
+  # A server on this Mac (a local stand-in) is host.docker.internal from inside the container.
+  local host="$PGHOST"
+  case "$host" in localhost|127.0.0.1|::1) host=host.docker.internal ;; esac
+  PGHOST="$host" docker run --rm -i -v "$PWD:/w" -w /w -e PGHOST -e PGPORT -e PGDATABASE -e PGUSER -e PGPASSWORD \
+    -e PGSSLMODE -e PGCHANNELBINDING postgres:18 "$tool" "$@"
 }
