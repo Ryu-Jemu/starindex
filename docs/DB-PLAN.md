@@ -1,4 +1,6 @@
-# DB-PLAN: EC2에 PostgreSQL 18 직접 설치, 예보 2일 보관, 서비스에 필요한 데이터만 저장
+# DB-PLAN: 예보 2일 보관, 서비스에 필요한 데이터만 저장 (운영 DB: Neon Free, ADR-015)
+
+> **2026-10-01 변경 (ADR-015):** 운영 DB는 **Neon Free**(PostgreSQL 18, 싱가포르)다. 1장의 "DB 위치·RDS 사용 기간·장기 비용", 4.4의 연결 풀 값, 5장(EC2 직접 설치), 6.2(메모리 모사), 9장의 단일 장애점 항목은 **11장으로 대체**됐고 기록으로만 남긴다(각 자리에 표시). 2~3장(저장·보관), 4장의 나머지 코드 변경, 6.1 테스트는 그대로 유효하다.
 
 > **실행 기록 (2026-09-30 시작, 10-01 완료):** 사용자가 "작업을 구체화하고 완수하라"고 지시해, 8장 일정(M0 이후 수행)을 앞당겨 **C1~C8의 코드와 배포 산출물을 수행했다.** 결과, 검증, 계획과 달라진 점은 **10장**에 있다.
 > - C9(관측소 스냅숏)는 관측소를 고른 뒤 R1 첫 주에 하고, 기한은 11/28이다.
@@ -22,7 +24,7 @@
 |---|---|
 | DB 위치 | 방안 ①을 택합니다. 앱과 같은 EC2(t4g.small 2GB, AL2023 arm64, 서울)에 PostgreSQL 18을 직접 설치합니다. AL2023 core 저장소의 `postgresql18` 계열 패키지를 씁니다. |
 | RDS 호환 | `DB_URL`, `DB_USERNAME`, `DB_PASSWORD` 세 값만 바꾸면 RDS for PostgreSQL 18에서 그대로 돌아가야 합니다. 그래서 확장 기능, 슈퍼유저 권한이 필요한 SQL, 로컬 전용 문법을 쓰지 않습니다. 마이그레이션은 슈퍼유저가 아닌 소유자 계정으로 실행해도 통과해야 하고, 이것을 테스트로 보장합니다. |
-| RDS 사용 기간 | M0 시연(10/20)까지는 기존 PLAN대로 RDS를 씁니다. 과제 요건인 "RDS"를 충족하기 위해서입니다. 10/20~10/25에 코드를 바꿔 RDS에서 먼저 확인하고, 전환 절차(5.7)로 EC2 PostgreSQL로 옮긴 뒤 최종 스냅샷을 만들고 RDS를 삭제합니다. |
+| RDS 사용 기간 | (ADR-015로 대체: 시연에 필요할 때만 RDS, 이후 Neon. 전환은 11.9) M0 시연(10/20)까지는 기존 PLAN대로 RDS를 씁니다. 과제 요건인 "RDS"를 충족하기 위해서입니다. 10/20~10/25에 코드를 바꿔 RDS에서 먼저 확인하고, 전환 절차(5.7)로 EC2 PostgreSQL로 옮긴 뒤 최종 스냅샷을 만들고 RDS를 삭제합니다. |
 | 보관 기간 | 기본은 **2일**입니다. 2일보다 길게 두는 것은 서비스상 근거가 있는 네 가지뿐입니다(2장). |
 | 2일 예외 ① | 운영 이력 8일. G6의 "7일 연속" 판정과 관리자 이력 화면에 필요합니다. |
 | 2일 예외 ② | 천문 달력은 지난달 1일부터. 월 달력과 이벤트 팩에 필요합니다. |
@@ -32,7 +34,7 @@
 | S3 원문(`raw/kma/`, 120일) | 폐기합니다. `collect-only` 프로필도 폐기합니다. DB가 EC2에 항상 떠 있어서 둘 다 필요 없어졌습니다. 적중률에 필요한 예보 쪽 값은 수집할 때 `forecast_verification`에 바로 기록합니다(2.2). |
 | 앱과 팩 | 팩 스키마 2와 manifest는 바이트 단위로 바뀌지 않아야 하고, 이것을 합격 기준으로 둡니다. iOS 앱은 DB를 읽지 않습니다. |
 | 예상 효과 | 로컬 실측(3일 보관, 6개 항목)은 205k행, 31MB, DB 전체 39MB였습니다. 변경 후 예보는 약 2.2k행, 1MB 미만이고 DB 전체는 약 10~15MB로 예상합니다. 대부분은 PostgreSQL 기본 카탈로그입니다 [추정]. |
-| 장기 비용 | 2027-01부터 t4g.small + EBS + IPv4로 월 약 $21입니다 [추정]. 앱과 DB를 한 대에 두면 메모리가 모자라 t4g.micro로 내려갈 수 없습니다(5.3). |
+| 장기 비용 | (ADR-015로 대체: DB가 EC2 밖이라 t4g.micro를 다시 검토, 11.6) 2027-01부터 t4g.small + EBS + IPv4로 월 약 $21입니다 [추정]. 앱과 DB를 한 대에 두면 메모리가 모자라 t4g.micro로 내려갈 수 없습니다(5.3). |
 
 ---
 
@@ -310,11 +312,13 @@ CREATE TABLE forecast_verification (
 
 **팩 고정(pin)**
 - `scripts/etl.sh pin|unpin <version>`: 로컬에서 compose `psql`로 실행합니다.
-- `deploy/postgres/pin.sh <version>`: EC2에서 `psql -h 127.0.0.1 -U starindex`로 실행합니다.
+- `deploy/postgres/pin.sh <version>`: EC2에서 실행합니다. 접속은 `DB_URL`(Neon, TLS)과 SSM 비밀번호를 씁니다.
 - 데모 v1 팩(SERVICE-PLAN 5.9)은 **발행하는 즉시 pin**합니다.
 - M0 기간에는 팩 삭제 코드가 아직 없으므로 파일은 안전합니다. 10/20 이후 C5를 배포하기 **전에** 데모 버전을 pin합니다.
 
 ### 4.4 설정 (C6)
+
+> 연결 풀 값은 ADR-015로 바뀌었다: `minimum-idle: 0`, `idle-timeout: 60000`, `keepalive-time: 0`(11.2). 아래 블록은 당시 계획이다.
 
 **`application.yml`**
 ```yaml
@@ -361,6 +365,8 @@ MALLOC_ARENA_MAX=2
 ---
 
 ## 5. EC2 직접 설치 구성
+
+> **ADR-015로 대체(2026-10-01).** 운영 DB는 Neon이고, 이 장의 서버 설치·튜닝·pg_hba·로컬 복구는 쓰지 않는다. 관련 파일(`deploy/postgres/install.sh`, `pg_hba.conf`, `tune.sql`)은 지웠다(git 이력 db5aeb4·78c8ffa). 백업(5.5)과 IAM(5.4 표)은 11장에서 그대로 쓴다.
 
 ### 5.1 설치 방식
 
@@ -501,7 +507,7 @@ CREATE DATABASE starindex OWNER starindex TEMPLATE template0 ENCODING 'UTF8' LOC
 
 ### 5.8 산출물 파일
 
-실행 결과(10-01) 기준의 실제 파일입니다. 계획과 다른 점은 10장에 있습니다.
+ADR-014 구현(10-01 오전) 기준의 파일입니다. 계획과 다른 점은 10장에 있습니다. ADR-015 이후의 실제 구성(`deploy/ec2/install.sh`, `bootstrap-db.sh`, 새 `restore.sh`, 서버 파일 삭제)은 11.3~11.5입니다.
 
 | 파일 | 내용 |
 |---|---|
@@ -513,14 +519,6 @@ CREATE DATABASE starindex OWNER starindex TEMPLATE template0 ENCODING 'UTF8' LOC
 | `deploy/app/{start.sh,app.env.example}` | 5.4, 4.4. 데이터 키가 SSM에 아직 없으면 경고만 하고 키 없이 시작 |
 | `deploy/aws/{s3-lifecycle.json,iam-instance-db.json}` | 5.4, 5.5. 인스턴스 역할에는 CodeDeploy용 `deploy/backend/*` 읽기도 포함 |
 | `deploy/test/{Dockerfile,al2023-harness.sh}`, `scripts/deploy-check.sh` | AL2023 컨테이너 검증(10장). `systemctl`·`aws`만 대역으로 바꾸고 실제 스크립트를 실행 |
-
----|---|
-| `deploy/postgres/install.sh` | 멱등 스크립트. 패키지 설치 → initdb → pg_hba 교체 → `tune.sql` → 역할과 DB 생성(SSM 비밀번호) → `enable --now` → 재시작 |
-| `deploy/postgres/{pg_hba.conf,tune.sql,backup.sh,restore.sh,pin.sh}` | 5.2~5.6 |
-| `deploy/systemd/starindex.service` | `Requires=postgresql.service`, `After=postgresql.service valkey.service network-online.target`, `EnvironmentFile=/etc/starindex/app.env`, `ExecStart=/opt/starindex/start.sh`, `Restart=on-failure`, `RestartSec=10` |
-| `deploy/systemd/postgresql.service.d/oom.conf`, `starindex-pgdump.{service,timer}` | 5.2, 5.5 |
-| `deploy/app/{start.sh,app.env.example}` | 5.4, 4.4 |
-| `deploy/aws/{s3-lifecycle-backup.json,iam-instance-db.json}` | 5.4, 5.5 |
 
 ---
 
@@ -558,6 +556,8 @@ CREATE DATABASE starindex OWNER starindex TEMPLATE template0 ENCODING 'UTF8' LOC
 | `DataGoKrClientTest` | 4.1의 선택 정리를 하는 경우에만 PCP 단언을 바꿉니다. |
 
 ### 6.2 EC2 메모리 모사 (`scripts/ec2sim.sh`, C6)
+
+> ADR-015 이후 모사는 DB를 EC2 밖에 둔다(postgres는 제한 없는 Neon 대역, Valkey만 제한). 합계는 JVM + Valkey + 270이고, 대기 중 연결 0 판정과 t4g.micro 참고 예산이 추가됐다. 최신 결과는 11.7이다. 아래는 ADR-014 당시의 절차다.
 
 로컬 JVM(macOS, 코어 여러 개)은 EC2를 대표하지 못하므로 JVM도 Linux arm64 컨테이너에서 돌립니다.
 - postgres와 valkey: `docker-compose.ec2sim.yml` override로 각각 `mem_limit` 320m와 160m를 겁니다. postgres `command`에는 5.2와 같은 `-c` 값을 줍니다.
@@ -684,7 +684,7 @@ M0 동결 전 평일 여유는 약 2일입니다(SERVICE-PLAN 7.1). 그래서 **
 **해석**
 - 발표가 거꾸로 두 번 이상 백필되면 항목별 대체 값이 지금 방식과 다를 수 있습니다. 정상 운영에서는 결과가 같습니다.
 - 2일 보관 때문에 이틀보다 이전 밤은 다시 발행할 수 없습니다. ETL이 2일 넘게 실패하면 현재 팩이 그대로 유지되고, 신선도 알람(PLAN 3.5 ②)이 이를 잡습니다.
-- 앱, DB, Valkey가 EC2 한 대와 EBS 하나에 모두 있어 단일 장애점입니다. 마지막 덤프 이후 최대 24시간의 이력을 잃을 수 있습니다. 팩은 S3에 있습니다(W3 이후).
+- (ADR-015로 대체: DB는 Neon. EC2 장애에도 DB는 남고, Neon 정지·한도 초과의 위험은 11.8) 앱, DB, Valkey가 EC2 한 대와 EBS 하나에 모두 있어 단일 장애점입니다. 마지막 덤프 이후 최대 24시간의 이력을 잃을 수 있습니다. 팩은 S3에 있습니다(W3 이후).
 - S3 원문을 폐기했으므로 21~00시 SKY/PTY 밖의 새 적중률 정의(예: 다른 시각대, TMP 기반)는 소급 계산할 수 없습니다. 지금 공개 지표와 T13은 스냅숏으로 충분합니다.
 - 평가자가 "RDS가 상시 떠 있어야 한다"고 보면 월 약 $21이 더 듭니다 [불확실].
 
@@ -706,6 +706,8 @@ M0 동결 전 평일 여유는 약 2일입니다(SERVICE-PLAN 7.1). 그래서 **
 ---
 
 ## 10. 실행 결과와 계획 대비 변경 (2026-10-01)
+
+> ADR-014(EC2 직접 설치) 구현 기록이다. 같은 날 DB 위치는 ADR-015(Neon)로 바뀌었고, 그 구현과 검증은 11장에 있다. 아래의 `install.sh`, 로컬 복구, `tune.sql`, 서버 메모리 수치는 ADR-014 기준이다.
 
 ### 10.1 커밋
 
@@ -755,6 +757,117 @@ M0 동결 전 평일 여유는 약 2일입니다(SERVICE-PLAN 7.1). 그래서 **
 - 실제 EC2 설치와 RDS → EC2 전환(W3 이후, 8장 "EC2 적용 순서"), 6.3 운영 측정.
 - Valkey: EC2(AL2023)는 9.0.6, 로컬·CI는 8입니다. 프로토콜은 호환되지만 CI 이미지를 9로 맞출지는 정하지 않았습니다.
 - 개발 PC: Desktop 폴더 동기화가 `build/` 안에 `이름 2.class` 사본을 만들어 Gradle 테스트가 "wrong name"으로 실패한 적이 있습니다(사본을 지우면 해결). 저장소를 동기화 밖으로 옮기거나 `build`를 동기화에서 빼는 것을 권합니다.
+
+---
+
+## 11. Neon Free 운영 (ADR-015, 2026-10-01)
+
+### 11.1 구성
+
+| 항목 | 값 |
+|---|---|
+| 서비스 | Neon Free 프로젝트 1개, PostgreSQL 18, AWS ap-southeast-1(싱가포르). 서울·도쿄 리전은 없다 [확실] |
+| 컴퓨트 | 자동 확장 상한 **0.25 CU 고정**(콘솔 → Compute). 2 CU까지 오르면 CU-시간을 8배 쓴다 |
+| 연결 | 직접 엔드포인트(호스트에 `-pooler` 없음). Flyway, `pg_dump`, `pg_restore`는 직접 연결이 필요하다 [확실] |
+| `DB_URL` | `jdbc:postgresql://<ep-…>.ap-southeast-1.aws.neon.tech/starindex?sslmode=require&channelBinding=require` |
+| 역할 | 앱은 SQL로 만든 `starindex`(슈퍼유저 아님, CREATEDB 없음). 관리 작업만 `neondb_owner`(Neon 기본 관리 계정, CREATEDB·CREATEROLE) |
+| 비밀 | `/starindex/db/password`(SSM SecureString). `neondb_owner` 비밀번호는 EC2에 두지 않고, 관리 작업 때 입력한다 |
+| 쓸 수 없는 것 | `ALTER SYSTEM`(인스턴스 설정), 슈퍼유저, 테이블스페이스 [확실]. 기본값에서 `max_connections` 112(0.25 CU), `idle_in_transaction_session_timeout` 5분 |
+
+### 11.2 Neon이 쉬도록 하는 설정 (CU-시간 예산)
+
+- Neon은 실행 중인 쿼리가 5분 동안 없으면 정지한다. 열려 있기만 한 연결은 막지 않지만, 새 연결과 쿼리는 타이머를 다시 시작한다 [확실].
+- HikariCP 7.0.2는 유휴 연결에 기본 2분마다 핑을 보낸다(6.2.1부터) [확실, HikariCP 소스]. 이전 설정(최소 1개 유지)이면 24시간 깨어 있어 월 약 180 CU-시간이 되고, 100 한도를 넘겨 약 16일째 정지한다 [추정].
+- 그래서 다음처럼 둔다(`application.yml`, `DataSourcePoolTest`).
+  - `minimum-idle: 0`
+  - `idle-timeout: 60000`
+  - `keepalive-time: 0`
+  - `maximum-pool-size: 5`
+  - `connection-timeout: 30000`
+- 실측: 서버를 띄우고 마지막 쿼리 뒤 100초가 지나면 DB 연결이 0이다(`scripts/deploy-check.sh`). 10분 모사에서도 대기 중 연결이 0으로 내려간다(11.7).
+- DB를 주기적으로 건드리는 것은 금지한다.
+  - `/actuator/health`(db 지표가 연결을 연다)를 폴링하지 않는다.
+  - 공개 `/api/health`(W3)는 DB를 읽지 않게 만든다.
+  - 관리 화면 자동 새로고침도 DB를 읽지 않는 주기로 둔다.
+  - 시작 실패 재시작 루프도 같은 효과다. `starindex.service`는 120초 간격, 시간당 5회까지만 재시작하고, 그 뒤에는 실패 상태로 멈춘다(고친 뒤 `systemctl reset-failed starindex && systemctl start starindex`). 신선도 알람(PackAgeMinutes)이 멈춘 것을 잡는다.
+- 예상 사용량 [추정]
+  - 하루 약 10번 깨어난다: 예보 8번, 00:30 astroDaily, 01:10 astroEvents. 백업은 05:20 KST로 옮겨 05:15 실행의 깨어 있는 시간에 붙였다.
+  - 한 번에 실행 약 3분 + 풀 정리 약 1.5분 + 정지 대기 5분 ≈ 10분이다.
+  - 하루 약 100분, 월 약 50시간이고, 0.25 CU면 **월 약 12 CU-시간**이다.
+  - 첫 주에는 Neon 콘솔 Usage를 매일 확인하고, 실측을 11.7에 적는다.
+- 그 밖의 한도 [추정]
+  - 저장: 0.5GB 대비 수 MB
+  - 전송: 5GB/월 대비 일일 덤프 수 MB × 30
+
+### 11.3 설치 순서 (W3, 사용자 조치 포함)
+
+1. Neon 콘솔에서 프로젝트를 만든다. 이름 `starindex`, Postgres 18, AWS Asia Pacific (Singapore). 그다음 Compute 자동 확장 상한을 0.25 CU로 둔다.
+2. 연결 정보에서 **직접(pooled 끔) 호스트**를 복사한다. `neondb_owner` 비밀번호는 보관만 하고 EC2에는 저장하지 않는다.
+3. SSM에 `/starindex/db/password`(`openssl rand -base64 32`, SecureString)를 만든다. Neon은 SQL로 정하는 비밀번호에 60비트 이상의 엔트로피를 요구한다 [확실]. 이 값은 그보다 훨씬 강하다.
+4. EC2에서 `/etc/starindex/app.env`를 `deploy/app/app.env.example`로 만든다. `DB_URL`(11.1)과 `S3_BUCKET`을 채운다.
+5. `sudo deploy/ec2/install.sh`: PostgreSQL 18 클라이언트, Valkey(로컬, 128MB, 저장 없음), 앱 사용자, 운영 스크립트·유닛, 백업 타이머, 스왑
+6. `sudo /opt/starindex/postgres/bootstrap-db.sh`: `neondb_owner` 비밀번호를 묻는다.
+   - `create-db.sql`로 `starindex` 역할과 DB를 만든다.
+   - SSM 비밀번호를 stdin으로 설정한다.
+   - 앱 역할로 TLS 접속을 확인한다.
+7. `sudo systemctl enable --now starindex`: Flyway가 V1~V6을 적용한다.
+8. 첫날 백업(`starindex-pgdump.timer`)과 복원 리허설(11.5)을 한 번씩 확인한다.
+
+### 11.4 백업
+
+- `backup.sh`는 그대로다. `DB_URL`에서 호스트, DB, `sslmode`, `channelBinding`을 읽어 `pg_dump -Fc --no-tablespaces`로 S3 `backup/db/`에 올린다(7일).
+- 시각은 05:20 KST(20:20 UTC)다.
+- 클라이언트는 AL2023 `postgresql18`(서버와 같은 메이저)다. `pg_dump`는 자기보다 새 메이저의 서버를 덤프하지 못한다 [확실].
+
+### 11.5 복구
+
+| 상황 | 방법 |
+|---|---|
+| 6시간 안에 알아챈 실수 | Neon 콘솔 → Backup & Restore → 즉시 복원(루트 브랜치 전체, 이전 상태는 `_old` 브랜치로 남음, 연결 문자열 그대로) [확실]. 확인 뒤 `_old` 브랜치를 지운다(브랜치 10개 한도) |
+| 그보다 오래된 백업 | `restore.sh <날짜|latest> <새 DB 이름> [--switch]`. 운영 DB 옆에 새 DB를 만들어(관리 계정) 앱 역할로 복원하고, 확인한 뒤 `--switch`로 `app.env`의 `DB_URL`만 바꿔 앱을 다시 켠다. 이전 DB와 `app.env.bak-*`는 남는다 |
+| 복원 리허설 | `restore.sh latest starindex_restoretest`(앱 정지 없음). 같은 밤을 재발행해 같은 팩 버전이 나오는지 본다 |
+
+- `restore.sh`는 운영 DB를 대상으로 받지 않는다. 잘못된 아카이브는 아무것도 만들기 전에 거부한다. 복원이 중간에 실패하면 만들던 DB를 지운다.
+
+### 11.6 EC2 크기
+
+- DB가 EC2 밖으로 나가 EC2에는 JVM과 Valkey만 남는다. 11.7 실측으로 t4g.small(2GB)은 여유가 크다.
+- t4g.micro(1GB)는 다시 후보다. 전환 조건(PLAN rev4의 조건을 되살림)은 다음과 같다.
+  - `-Xmx384m`
+  - Valkey `maxmemory 64mb`
+  - 실제 EC2에서 7일 동안 MemAvailable ≥250MiB이고 스왑이 거의 0
+- 무료 체험(t4g.small, 2026-12-31까지) 동안 측정하고 12월에 정한다. 2027년 월 비용은 약 $21(small) 또는 $13(micro)이다 [추정].
+
+### 11.7 검증 결과 (2026-10-01)
+
+| 검증 | 결과 |
+|---|---|
+| `./gradlew test` | 58/58 통과(`DataSourcePoolTest` 포함), 팩 골든 해시 불변 |
+| `scripts/deploy-check.sh` (amazonlinux:2023, Neon 대역: TLS만 받는 PostgreSQL 18, 슈퍼유저 아닌 CREATEDB·CREATEROLE 관리 계정) | 72/72 통과. 설치 2회(두 번째는 0700 홈), Valkey 설정은 바뀔 때만 재시작, 재시작 횟수 제한, `bootstrap-db.sh` 2회(TLS true, superuser false, CREATEDB 없음, locale C), 비밀번호가 argv·로그에 없음, `start.sh`로 Flyway V1~V6(TLS + channel binding), **서버 유휴 100초 뒤 DB 연결 0**, 파이프라인, 백업, pin, 운영 DB 옆 복원 리허설 → 같은 팩 버전, 기존 DB(되돌리기용 사본) 덮어쓰기 거부, 잘못된 아카이브·복원 실패 처리, `--switch`(app.env 갱신·백업·권한·앱 재시작), 비밀번호 교체 뒤 앱 재시작, 빈 운영 DB 첫 채우기(11.9)와 두 번째 거부 |
+| `scripts/ec2sim.sh 600` (DB는 EC2 밖, 로컬 postgres가 Neon 역할) | PASS. 최대: 서버 JVM(웹 + 스케줄러 + 파이프라인) 306MiB, CLI JVM 267MiB, Valkey 19MiB. EC2 합계(+OS·에이전트 270) **595/1,600MiB**. t4g.micro 참고 예산(약 900MiB, 가정)에도 들어간다. 연결 최대 2. **대기 중 122개 표본 모두 연결 0**. 작업 7개 성공, OOM 없음 |
+
+### 11.8 위험
+
+- Neon은 중단 없는 가용성이 필요한 운영에는 Free를 권하지 않는다 [확실].
+  - DB가 멈춰도 앱은 S3·CloudFront의 마지막 팩으로 동작한다.
+  - 그 사이의 새 발표는 수집되지 않는다. 신선도 알람(PackAgeMinutes)이 이를 잡는다.
+- Free에서 상업적 이용이 허용되는지는 확인하지 못했다 [불확실]. 출시 전에 Master Cloud Services Agreement와 AUP를 확인한다.
+- 미확인 사항 [불확실]
+  - HikariCP의 `isValid()` 핑이 Neon 타이머를 다시 시작하는지는 문서에 없다. keepalive를 껐으므로 상관없다.
+  - 기본 브랜치가 자동 보관(archive)에서 빠지는지는 확인하지 못했다. 매일 접속하므로 보관 조건(24시간 미접속)에 걸리지 않는다.
+  - 0.5GB에 6시간 이력이 포함되는지도 확인하지 못했다. 우리 DB는 수 MB라 여유가 크다.
+  - 싱가포르 지연은 측정하지 않았다. 첫 주 배치 실행 시간을 기록한다.
+- 되돌리기: EC2 직접 설치(ADR-014) 또는 RDS. 둘 다 `DB_URL`만 바꾼다.
+
+### 11.9 RDS → Neon 전환 (시연에 RDS를 쓴 경우)
+
+1. 시연이 끝나면 스케줄 실행이 없는 시간에 `sudo systemctl stop starindex`
+2. RDS에서 마지막 덤프: `sudo -u starindex /opt/starindex/postgres/backup.sh`(이때 `DB_URL`은 아직 RDS)
+3. `/etc/starindex/app.env`의 `DB_URL`을 Neon 직접 엔드포인트로 바꾼다(DB 이름 `starindex`).
+4. `sudo /opt/starindex/postgres/bootstrap-db.sh`: Neon에 역할과 **빈** DB를 만든다.
+5. `/opt/starindex/postgres/restore.sh latest starindex`: 운영 DB가 **비어 있을 때만** 바로 채운다(`--single-transaction`이라 실패하면 다시 빈 상태). 표가 하나라도 있으면 거부한다.
+6. `sudo systemctl start starindex` → 파이프라인 1회 확인
+7. RDS 최종 스냅샷 → RDS 삭제(정지만 하면 7일 뒤 자동 시작) [확실]
 
 ---
 

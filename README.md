@@ -6,7 +6,7 @@
 - **iOS**: SwiftUI, CoreMotion 방향 추적, Astronomy Engine(C), SwiftUI Canvas와 Metal 셰이더
 - **AR**: Unity 6.3 LTS(AR Foundation과 ARKit, Unity as a Library)
 - **백엔드**: Spring Boot 4.1, Spring Batch, QueryDSL, WebSocket, JWT, Redis 호환(Valkey)
-- **인프라**: GitHub Actions → S3 → CodeDeploy → EC2, PostgreSQL 18(EC2 직접 설치, M0 시연은 RDS 가능, ADR-014), S3, CloudFront
+- **인프라**: GitHub Actions → S3 → CodeDeploy → EC2, PostgreSQL 18(Neon Free, M0 시연은 RDS 가능, ADR-015), S3, CloudFront
 
 ## 저장소 구조
 

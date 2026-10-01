@@ -1,7 +1,7 @@
 # ETL 운영 안내
 
 인증키를 넣으면 바로 돌아가도록 만든 ETL의 사용법이다.
-- DB: PostgreSQL 18. 운영에서는 앱 EC2에 직접 설치한다(ADR-013, ADR-014, 세부는 `docs/DB-PLAN.md`).
+- DB: PostgreSQL 18. 운영은 Neon Free(싱가포르, TLS, 직접 엔드포인트)다(ADR-013, ADR-015, 세부는 `docs/DB-PLAN.md` 11장). 로컬은 docker compose다.
 - 캐시와 호출 한도: Valkey(로컬 8, EC2 AL2023 패키지 9)
 - 배치: Spring Batch 6
 - 보관: 서비스에 필요한 것만, 기본 2일(7절)
@@ -116,4 +116,5 @@ scripts/etl.sh pin <version>   # 이 팩 버전은 보존 정리에서 지우지
 
 - 설정: `starindex.etl.forecast-retention-days`(기본 2, 최소 2), `audit-retention-days`(기본 8, 최소 8), `pack-keep-min`(기본 3). 최소보다 작으면 앱이 시작하지 않는다.
 - 팩 고정: 로컬 `scripts/etl.sh pin|unpin <version>`, EC2 `/opt/starindex/postgres/pin.sh <version> [--unpin]`.
-- 운영 백업: 매일 04:40 KST 전체 `pg_dump`를 S3 `backup/db/`에 올리고 7일 뒤 지운다(`deploy/postgres/backup.sh`). 복구는 `restore.sh`.
+- 운영 백업: 매일 05:20 KST 전체 `pg_dump`를 S3 `backup/db/`에 올리고 7일 뒤 지운다(`deploy/postgres/backup.sh`). Neon Free의 복원 기간은 6시간뿐이라 이것이 실제 백업이다. 복구는 6시간 안이면 Neon 즉시 복원, 그보다 오래됐으면 `restore.sh`(운영 DB 옆 새 DB에 복원한 뒤 `--switch`).
+- 연결 풀은 유휴 연결을 남기지 않는다(최소 0, 60초, keepalive 끔). Neon이 5분 뒤 쉬어야 월 100 CU-시간 안에 든다. `/actuator/health`를 주기적으로 호출하지 않는다.

@@ -647,7 +647,7 @@ StarIndex (최소 iOS 26.1, ADR-011)
 
 | 기능 | 인일 |
 |---|---|
-| 품질 게이트, 교차검증 Step(DB는 R1부터 EC2 PostgreSQL 18이라 RDS 복원·raw 재적재는 없다, ADR-014) | 3.0 |
+| 품질 게이트, 교차검증 Step(DB는 R1부터 Neon Free PostgreSQL 18이라 RDS 복원은 없고, S3 raw 폐기로 raw 재적재도 없다, ADR-014·ADR-015) | 3.0 |
 | **G6 7일 연속 Job 성공** 대응(달력 시간은 병행, 수정 공수) | 0.5 |
 | 팩 스키마 v2 + 시군구 확대 + **캠핑 체감 필드(TMP, REH, WSD, POP)** | 2.5 |
 | `astroEventsJob`(천문현상, 특일, 음양력) → 이벤트 팩 | 2.0 |
@@ -773,14 +773,17 @@ StarIndex (최소 iOS 26.1, ADR-011)
 | Redis(Valkey) | 쿼터, manifest 캐시, WS Pub/Sub, Job 락, 진행률 |
 | JWT | 관리자 로그인, WS 티켓 |
 | WebSocket | `/ws/admin` 진행률(주 시연), `/ws/v1/live` 새 팩 배너(선택 기능) |
-| PostgreSQL 18(M0 RDS, 이후 EC2 직접 설치, ADR-014) | 예보, 채점, 명소, 발행 이력 |
+| PostgreSQL 18(Neon Free 관리형, 시연에 RDS가 필요하면 그 기간만 RDS, DB_URL만 바꾼다, ADR-015) | 예보, 채점, 명소, 발행 이력 |
 | **Bootstrap** | 관리자 화면. 그리고 **공개 정적 페이지 '오늘 밤 전국 지수'**: `publicPageStep`이 Thymeleaf + Bootstrap으로 렌더해 S3 → CloudFront 기본 도메인에 올린다. 위치 입력 없이 17개 시·도 표, 발표 시각, 적중률 요약을 보여 준다. **Support URL과 Marketing URL, 개인정보처리방침 URL을 겸한다.** 정적 파일이라 EC2를 꺼도 떠 있다 |
 
 ### 8.7 과제 종료 후 운영 모드(ADR-012)
-- **비용**(PLAN 3.6 비용 표, ADR-014, 추정)
-  - R1부터 2026-12-31까지는 EC2 24/7(DB 포함)로 월 약 6 USD다. RDS는 쓰지 않는다.
+- **비용**(PLAN 3.6 비용 표, ADR-015, DB-PLAN 11, 추정)
+  - DB는 Neon Free라 0 USD다. EC2에는 JVM과 Valkey만 돈다.
+  - R1부터 2026-12-31까지는 EC2 24/7로 월 약 6 USD다(EIP/IPv4 3.65 + EBS + S3). M0 뒤에는 RDS를 쓰지 않는다.
   - T4g 무료 체험이 2026-12-31에 끝난다.
   - 2027-01부터는 24/7 기준 월 약 21 USD(t4g.small + EBS + IPv4, RDS 없음)다.
+  - t4g.micro 조건(-Xmx384m, Valkey maxmemory 64mb, 실제 EC2에서 7일간 MemAvailable ≥250 MiB, 스왑 ≈0)을 통과하면 월 약 13 USD다. 12월에 정한다.
+  - Neon Free의 월 100 CU-시간이나 이그레스 5 GB를 넘으면 다음 달까지 DB가 멈춘다. 저장 0.5 GB를 넘으면 쓰기만 실패하고, 데이터를 줄일 때까지 이어진다(달이 바뀌어도 풀리지 않는다). 팩은 S3/CloudFront에 있어 앱은 동작하지만 새 발표는 적재되지 않는다.
   - 제출(3월)까지는 R3~R5 24/7 운영으로 약 3개월에 약 65 USD다(추정).
 - **출시 후 기본값**
   - 심사와 출시 뒤 4주는 24/7이다.
@@ -854,7 +857,7 @@ StarIndex (최소 iOS 26.1, ADR-011)
 | 단계 | 기간 | 가용 평일 | 계획 인일 |
 |---|---|---|---|
 | M0 | 9/30–10/19 | 11(동결 전) + 주말 버퍼 | 확정 10.0 + 조건부 3.0 |
-| 정리·회고 | 10/20–10/23 | 4 | 계획 밖 버퍼(RDS 최종 스냅샷 뒤 삭제, DB-PLAN C2~C8, 문서) |
+| 정리·회고 | 10/20–10/23 | 4 | 계획 밖 버퍼(시연에 RDS를 썼다면 최종 스냅샷 뒤 삭제, DB-PLAN C2~C8, 문서) |
 | R0 | 10/26–10/30 | 5 | 5 |
 | R1 | 11/2–12/14 | 31 | 30.5 |
 | R2 | 12/15–12/24 | 8 | 8(Go) / 7.5(①) / 0(③) |
