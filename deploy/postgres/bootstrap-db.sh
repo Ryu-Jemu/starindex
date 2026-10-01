@@ -25,8 +25,11 @@ unset pw
 echo "== check as the app role"
 load_db_env
 psql -v ON_ERROR_STOP=1 -tA -c "SELECT 'connected as ' || current_user || ' to ' || current_database()
-  || ', PostgreSQL ' || current_setting('server_version') || ', TLS ' || coalesce((SELECT ssl::text FROM pg_stat_ssl WHERE pid = pg_backend_pid()), 'n/a')
+  || ', PostgreSQL ' || current_setting('server_version')
   || ', superuser ' || (SELECT rolsuper::text FROM pg_roles WHERE rolname = current_user)"
+# TLS as the client sees it: Neon ends TLS at its proxy, so pg_stat_ssl on the compute shows no TLS (seen 2026-10-01).
+tls="$(psql -tA -c '\conninfo' 2>/dev/null | grep -oE 'TLSv1\.[0-9]' | head -1)" || true
+echo "client TLS: ${tls:-none} (sslmode=${PGSSLMODE:-default}, channel_binding=${PGCHANNELBINDING:-default})"
 # A running app keeps the password it read from SSM at start: restart it so new connections use the new one.
 if systemctl is-active -q starindex 2>/dev/null; then
   echo "== restarting the app (it read the old password at start)"

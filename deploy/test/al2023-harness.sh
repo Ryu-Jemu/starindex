@@ -106,7 +106,7 @@ check "bootstrap-db.sh" bash -c "ADMIN_PGPASSWORD='$ADMIN_PW' setsid bash /opt/s
 cat /tmp/bootstrap1.log | grep "connected as"
 check "bootstrap-db.sh again (idempotent)" bash -c "ADMIN_PGPASSWORD='$ADMIN_PW' setsid bash /opt/starindex/postgres/bootstrap-db.sh > /tmp/bootstrap2.log 2>&1"
 check "bootstrap with the app stopped does not restart it" bash -c '! grep -q "restart starindex" /tmp/systemctl.log'
-check "app role: TLS" grep -q "TLS true" /tmp/bootstrap1.log
+check "app role: client TLS 1.2+ with channel binding required" grep -qE "client TLS: TLSv1\.[23] \(sslmode=require, channel_binding=require\)" /tmp/bootstrap1.log
 check "app role: not superuser, no CREATEDB" test "$(runuser -u postgres -- psql -tAc "SELECT rolsuper::text || rolcreatedb::text FROM pg_roles WHERE rolname='starindex'")" = falsefalse
 check "database starindex owned by starindex, locale C" test "$(runuser -u postgres -- psql -tAc "SELECT pg_get_userbyid(datdba) || '/' || datcollate FROM pg_database WHERE datname='starindex'")" = starindex/C
 check "argv log is recording" test -s /tmp/argv.log

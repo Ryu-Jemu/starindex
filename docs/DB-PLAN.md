@@ -767,12 +767,12 @@ M0 동결 전 평일 여유는 약 2일입니다(SERVICE-PLAN 7.1). 그래서 **
 | 항목 | 값 |
 |---|---|
 | 서비스 | Neon Free 프로젝트 1개, PostgreSQL 18, AWS ap-southeast-1(싱가포르). 서울·도쿄 리전은 없다 [확실] |
-| 컴퓨트 | 자동 확장 상한 **0.25 CU 고정**(콘솔 → Compute). 2 CU까지 오르면 CU-시간을 8배 쓴다 |
+| 컴퓨트 | Free에서는 크기를 바꿀 수 없다. 새 컴퓨트의 기본값은 0.25 CU 고정(콘솔 Compute defaults, 사용자 화면 10-01)이지만, 프로젝트를 만들 때 생긴 primary 컴퓨트는 **0.25~2 CU 자동 확장**이다 [확실, API 10-01]. 가벼운 배치라 0.25 근처에 머물 것으로 보지만 [추정], 첫 주 사용량으로 확인한다. 계속 2 CU면 CU-시간을 8배 쓴다 |
 | 연결 | 직접 엔드포인트(호스트에 `-pooler` 없음). Flyway, `pg_dump`, `pg_restore`는 직접 연결이 필요하다 [확실] |
 | `DB_URL` | `jdbc:postgresql://<ep-…>.ap-southeast-1.aws.neon.tech/starindex?sslmode=require&channelBinding=require` |
 | 역할 | 앱은 SQL로 만든 `starindex`(슈퍼유저 아님, CREATEDB 없음). 관리 작업만 `neondb_owner`(Neon 기본 관리 계정, CREATEDB·CREATEROLE) |
 | 비밀 | `/starindex/db/password`(SSM SecureString). `neondb_owner` 비밀번호는 EC2에 두지 않고, 관리 작업 때 입력한다 |
-| 쓸 수 없는 것 | `ALTER SYSTEM`(인스턴스 설정), 슈퍼유저, 테이블스페이스 [확실]. 기본값에서 `max_connections` 112(0.25 CU), `idle_in_transaction_session_timeout` 5분 |
+| 쓸 수 없는 것 | `ALTER SYSTEM`(인스턴스 설정), 슈퍼유저, 테이블스페이스 [확실]. 실측 `max_connections` 901(상한 2 CU 기준), 시간대 GMT, `idle_in_transaction_session_timeout` 5분 |
 
 ### 11.2 Neon이 쉬도록 하는 설정 (CU-시간 예산)
 
@@ -801,7 +801,7 @@ M0 동결 전 평일 여유는 약 2일입니다(SERVICE-PLAN 7.1). 그래서 **
 
 ### 11.3 설치 순서 (W3, 사용자 조치 포함)
 
-1. Neon 콘솔에서 프로젝트를 만든다. 이름 `starindex`, Postgres 18, AWS Asia Pacific (Singapore). 그다음 Compute 자동 확장 상한을 0.25 CU로 둔다.
+1. Neon 콘솔에서 프로젝트를 만든다. Postgres 18, AWS Asia Pacific (Singapore). **완료(10-01)**: `star_index`(holy-mountain-03233485), 브랜치 `production`, primary 컴퓨트 0.25~2 CU, 6시간 이력.
 2. 연결 정보에서 **직접(pooled 끔) 호스트**를 복사한다. `neondb_owner` 비밀번호는 보관만 하고 EC2에는 저장하지 않는다.
 3. SSM에 `/starindex/db/password`(`openssl rand -base64 32`, SecureString)를 만든다. Neon은 SQL로 정하는 비밀번호에 60비트 이상의 엔트로피를 요구한다 [확실]. 이 값은 그보다 훨씬 강하다.
 4. EC2에서 `/etc/starindex/app.env`를 `deploy/app/app.env.example`로 만든다. `DB_URL`(11.1)과 `S3_BUCKET`을 채운다.
@@ -845,6 +845,7 @@ M0 동결 전 평일 여유는 약 2일입니다(SERVICE-PLAN 7.1). 그래서 **
 | `./gradlew test` | 58/58 통과(`DataSourcePoolTest` 포함), 팩 골든 해시 불변 |
 | `scripts/deploy-check.sh` (amazonlinux:2023, Neon 대역: TLS만 받는 PostgreSQL 18, 슈퍼유저 아닌 CREATEDB·CREATEROLE 관리 계정) | 72/72 통과. 설치 2회(두 번째는 0700 홈), Valkey 설정은 바뀔 때만 재시작, 재시작 횟수 제한, `bootstrap-db.sh` 2회(TLS true, superuser false, CREATEDB 없음, locale C), 비밀번호가 argv·로그에 없음, `start.sh`로 Flyway V1~V6(TLS + channel binding), **서버 유휴 100초 뒤 DB 연결 0**, 파이프라인, 백업, pin, 운영 DB 옆 복원 리허설 → 같은 팩 버전, 기존 DB(되돌리기용 사본) 덮어쓰기 거부, 잘못된 아카이브·복원 실패 처리, `--switch`(app.env 갱신·백업·권한·앱 재시작), 비밀번호 교체 뒤 앱 재시작, 빈 운영 DB 첫 채우기(11.9)와 두 번째 거부 |
 | `scripts/ec2sim.sh 600` (DB는 EC2 밖, 로컬 postgres가 Neon 역할) | PASS. 최대: 서버 JVM(웹 + 스케줄러 + 파이프라인) 306MiB, CLI JVM 267MiB, Valkey 19MiB. EC2 합계(+OS·에이전트 270) **595/1,600MiB**. t4g.micro 참고 예산(약 900MiB, 가정)에도 들어간다. 연결 최대 2. **대기 중 122개 표본 모두 연결 0**. 작업 7개 성공, OOM 없음 |
+| **실제 Neon** (프로젝트 `star_index`, 이 Mac → 싱가포르, 10-01) | 관리 계정 `neondb_owner`: 슈퍼유저 아님, CREATEDB·CREATEROLE, neon_superuser 멤버, `createrole_self_grant` 비어 있음. 저장소의 `create-db.sql` 그대로 성공(2회, LOCALE C + template0 허용, SET 부여 동작). 앱 역할은 슈퍼유저·CREATEDB·neon_superuser 아님. 접속 TLS 1.3 + channel binding 필수 성공(Neon은 TLS를 프록시에서 끝내 `pg_stat_ssl`에는 안 보임). Flyway V1~V6 적용, 파이프라인 2회 28~40초(JVM 시작 포함), astro 56초, 팩 버전 컨테이너 검증과 동일, DB 8.7MB. **앱 서버를 켠 채 약 350초 뒤 컴퓨트 idle 확인**(풀이 비운 뒤 5분). 콜드 스타트 1.25초, 새 연결 0.60초, 쿼리 왕복 74ms. 검증용 DB·역할은 지웠다 |
 
 ### 11.8 위험
 
@@ -853,10 +854,11 @@ M0 동결 전 평일 여유는 약 2일입니다(SERVICE-PLAN 7.1). 그래서 **
   - 그 사이의 새 발표는 수집되지 않는다. 신선도 알람(PackAgeMinutes)이 이를 잡는다.
 - Free에서 상업적 이용이 허용되는지는 확인하지 못했다 [불확실]. 출시 전에 Master Cloud Services Agreement와 AUP를 확인한다.
 - 미확인 사항 [불확실]
-  - HikariCP의 `isValid()` 핑이 Neon 타이머를 다시 시작하는지는 문서에 없다. keepalive를 껐으므로 상관없다.
+  - HikariCP의 `isValid()` 핑이 Neon 타이머를 다시 시작하는지는 문서에 없다. keepalive를 껐으므로 상관없고, 실제 Neon에서 앱이 켜진 채 idle이 되는 것을 확인했다(11.7).
   - 기본 브랜치가 자동 보관(archive)에서 빠지는지는 확인하지 못했다. 매일 접속하므로 보관 조건(24시간 미접속)에 걸리지 않는다.
-  - 0.5GB에 6시간 이력이 포함되는지도 확인하지 못했다. 우리 DB는 수 MB라 여유가 크다.
-  - 싱가포르 지연은 측정하지 않았다. 첫 주 배치 실행 시간을 기록한다.
+  - 0.5GB에 6시간 이력이 포함되는지도 확인하지 못했다. 우리 DB는 수 MB(실측 8.7MB)라 여유가 크다.
+  - primary 컴퓨트의 자동 확장 상한(2 CU)을 Free에서 낮출 수 있는지 확인하지 못했다. 첫 주 CU-시간이 예상(월 약 12)보다 크게 나오면 이것부터 본다.
+  - 이 Mac → 싱가포르 쿼리 왕복은 74ms였다. EC2(서울)에서는 첫 주에 다시 잰다.
 - 되돌리기: EC2 직접 설치(ADR-014) 또는 RDS. 둘 다 `DB_URL`만 바꾼다.
 
 ### 11.9 RDS → Neon 전환 (시연에 RDS를 쓴 경우)

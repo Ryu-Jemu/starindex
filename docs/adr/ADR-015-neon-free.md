@@ -23,7 +23,7 @@
 1. 운영 DB는 Neon Free 프로젝트 하나로 한다.
    - PostgreSQL 18, 리전 AWS ap-southeast-1
    - 연결은 직접 엔드포인트(`-pooler`가 없는 호스트)와 TLS(`sslmode=require&channelBinding=require`)로 한다.
-   - 컴퓨트 자동 확장 상한은 0.25 CU로 고정한다(콘솔 설정).
+   - 컴퓨트 크기는 Free에서 바꿀 수 없다. primary 컴퓨트는 0.25~2 CU 자동 확장이고(10-01 확인), 첫 주 사용량을 본다.
 2. 연결 풀은 Neon이 쉬도록 둔다.
    - 최소 유휴 연결 0, 유휴 60초 뒤 닫기, keepalive 핑 끔
    - HikariCP 7 기본값은 2분마다 핑을 보내서 24시간 깨어 있게 만든다. 그러면 월 약 180 CU-시간이 된다 [추정].
@@ -55,4 +55,5 @@
 | 무료 플랜의 상업적 이용 허용 여부 [불확실] | 출시 전에 Neon 약관과 AUP를 확인한다. 막혀 있으면 유료 플랜이나 대안으로 옮긴다(`DB_URL`만 교체). |
 | 서울↔싱가포르 지연(미측정) | DB를 쓰는 것은 배치뿐이다. 첫 주 실행 시간을 기록한다. |
 
+- 실제 Neon 검증(10-01, DB-PLAN 11.7): `create-db.sql`, Flyway, 파이프라인, TLS + channel binding 성공. 앱 서버를 켠 채 약 350초 뒤 컴퓨트가 idle이 되는 것을 확인했다.
 - 대안(되돌릴 때): EC2 직접 설치(ADR-014, 스크립트는 git 이력 db5aeb4·78c8ffa) 또는 RDS. 둘 다 `DB_URL`만 바꾸면 된다.

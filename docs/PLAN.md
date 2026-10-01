@@ -262,7 +262,7 @@ docs/       adr/, ATTRIBUTION.md, review-notes.md, verification/, demo-script.md
 | 구성요소 | 선택 | 함정·근거 |
 |---|---|---|
 | EC2 | t4g.small(2GB) 1대만, **CPU 크레딧 standard**, gp3 20GB, 스왑 2GB, `-Xmx512m -XX:+UseSerialGC`(Metaspace 192m, code cache 64m, direct 64m), Valkey 128MB. JVM과 Valkey만 돌린다(DB 서버 없음, `deploy/ec2/install.sh`는 PostgreSQL 18 클라이언트와 Valkey만 설치) | **T4g 무료 체험 2026-12-31까지** [확실]. Unlimited 모드는 초과 과금. 리허설 실측(`scripts/ec2sim.sh`, 10-01, DB 제외 구성): 서버 JVM 306MiB, valkey 19MiB, OS·에이전트 270MiB 포함 1,600MiB 중 595MiB, 대기 중 DB 연결 0. **t4g.micro 전환이 다시 가능하다**(조건: `-Xmx384m`, Valkey `maxmemory 64mb`, 실제 EC2에서 7일간 MemAvailable ≥250MiB와 스왑 ≈0). 12월에 정한다(ADR-015) |
-| DB | **Neon Free**(PostgreSQL 18, ap-southeast-1, TLS, direct 엔드포인트, `-pooler` 아님). compute 0.25 CU 고정(autoscaling 최대를 낮게). Hikari `minimum-idle 0`, `idle-timeout 60000`, `keepalive-time 0`, 최대 풀 5. 최초 1회 `deploy/postgres/bootstrap-db.sh`(neondb_owner)로 `starindex` 역할(superuser·CREATEDB 없음)과 DB를 만든다 | 프로젝트당 0.5GB(넘으면 쓰기 실패), 월 100 CU-시간(넘으면 다음 달까지 정지), 5분 무쿼리 시 0으로 축소, 월 egress 5GB, 즉시 복원 6시간, 브랜치 10개 [확실, neon.com 문서 2026-10-01]. 예상 하루 약 10회 짧게 깨어나 월 약 12 CU-시간 [추정]. 2 CU면 8배다. HikariCP 7 기본값은 유휴 연결을 2분마다 확인해 Neon을 깨워 둔다(월 약 180 CU-시간). 실측: 마지막 쿼리 약 100초 뒤 DB 연결 0(ADR-015, DB-PLAN 11) |
+| DB | **Neon Free**(PostgreSQL 18, ap-southeast-1, TLS, direct 엔드포인트, `-pooler` 아님). 컴퓨트 크기는 Free에서 고정(primary 0.25~2 CU 자동 확장, 10-01 확인). Hikari `minimum-idle 0`, `idle-timeout 60000`, `keepalive-time 0`, 최대 풀 5. 최초 1회 `deploy/postgres/bootstrap-db.sh`(neondb_owner)로 `starindex` 역할(superuser·CREATEDB 없음)과 DB를 만든다 | 프로젝트당 0.5GB(넘으면 쓰기 실패), 월 100 CU-시간(넘으면 다음 달까지 정지), 5분 무쿼리 시 0으로 축소, 월 egress 5GB, 즉시 복원 6시간, 브랜치 10개 [확실, neon.com 문서 2026-10-01]. 예상 하루 약 10회 짧게 깨어나 월 약 12 CU-시간 [추정]. 2 CU면 8배다. HikariCP 7 기본값은 유휴 연결을 2분마다 확인해 Neon을 깨워 둔다(월 약 180 CU-시간). 실측: 마지막 쿼리 약 100초 뒤 DB 연결 0(ADR-015, DB-PLAN 11) |
 | 네트워크 | 기본 VPC 퍼블릭 서브넷, EIP 1개, SG는 CloudFront prefix list만 허용, SSM으로 접속 | **NAT를 쓰면 월 43 USD 이상 추가** [확실]. IPv4 월 3.65(정지 중에도 과금) [확실] |
 | RDS | **과제 시연에 필요할 때만, M0 시연 기간만**. db.t4g.micro **PostgreSQL 18**, Single-AZ, gp3 20GB, 퍼블릭 액세스 off, PI off | 정지해도 7일 뒤 자동 시작 [확실] → 시연 뒤 **최종 스냅샷을 만들고 삭제**. 이후 Neon으로 되돌린다(`DB_URL`만 교체, DB-PLAN 11.9, ADR-015) |
 | CloudFront | PAYG + 기본 도메인 | 월 1TB·1천만 요청 무료 [확실] |
@@ -284,7 +284,7 @@ docs/       adr/, ATTRIBUTION.md, review-notes.md, verification/, demo-script.md
 - **Budgets**: 2026년 월 30 USD, 2027-01부터 월 45 USD. 50/80/100%에 알림을 건다. M0 달에는 50% 알림이 울릴 수 있다.
 - **비용 체크리스트**(W3 완료 기준에 포함)
   - `aws ec2 describe-instance-credit-specifications` = standard
-  - Neon compute 0.25 CU 고정(autoscaling 최대 낮게), direct 엔드포인트·TLS, 콘솔 CU-시간 확인(ADR-015)
+  - Neon direct 엔드포인트·TLS, 첫 주 콘솔 CU-시간 확인(primary 컴퓨트 0.25~2 CU, ADR-015)
   - RDS(M0 시연에 쓸 때만) PostgreSQL 18, Single-AZ, PI off, 퍼블릭 off. 시연 뒤 최종 스냅샷과 삭제 확인
   - NAT 0, EIP 1
   - `cost-log.md` 첫 기록
@@ -616,7 +616,7 @@ W2 해질녘 재생 합격 기준
 | 나침반 오차, 축 부호 오류 | 배지, 프레임별 누적 보정, 수동 모드, R 열 구성, T7, G2 |
 | 대략적 위치에서 진북 프레임 불가 | W2 G3 스모크, magnetic 폴백을 W2 범위에 포함 |
 | Unity 환경·일정·메모리 | R2 Go/No-Go, 사용자 재결정, `AR_UNITY` OFF 빌드 유지 |
-| **비용 함정** | RDS는 M0 시연에 쓸 때만 쓰고 최종 스냅샷 뒤 삭제(정지 7일 뒤 자동 시작), Neon은 0.25 CU 고정과 Hikari 유휴 연결 0(ADR-015), NAT 미사용, standard 크레딧, Free plan은 W1에 Paid 전환, macOS CI 미사용, Budgets, cost-log |
+| **비용 함정** | RDS는 M0 시연에 쓸 때만 쓰고 최종 스냅샷 뒤 삭제(정지 7일 뒤 자동 시작), Neon은 Hikari 유휴 연결 0과 첫 주 CU-시간 확인(ADR-015), NAT 미사용, standard 크레딧, Free plan은 W1에 Paid 전환, macOS CI 미사용, Budgets, cost-log |
 | Neon Free 운영 | Neon은 중단 없는 가용성이 필요한 운영에는 Free를 피하라고 한다 [확실]. Free의 상업적 사용 허용 여부는 [불확실]. 서울→싱가포르 지연은 미측정(배치만 DB를 쓴다). CU-시간·egress를 넘으면 다음 달까지 DB가 정지한다. 이때 S3/CloudFront 팩으로 앱은 동작하고 다음 발표만 수집되지 않는다. 폴백은 EC2 PostgreSQL(ADR-014, 스크립트는 git `db5aeb4`/`78c8ffa`)이나 RDS, 모두 `DB_URL`만 바꾼다(ADR-015, DB-PLAN 11) |
 | 팩 전파 지연 | manifest TTL 60초, 불변 버전 경로, 롤백 시 무효화, T19 |
 | 관리자 자격증명 노출 | 공개 경로 차단, SSM 터널, 로그인 실패 잠금 |
@@ -642,9 +642,8 @@ W2 해질녘 재생 합격 기준
 4. Xcode > Settings > Accounts에서 개발자 팀에 로그인하고 번들 ID를 등록한다. 실기기에서 개발자 모드를 켠다. **보유 iPhone 모델명을 기록한다**(G5).
 5. **G-E1(디스크) 판정 뒤**, Unity Hub에서 6.3 LTS와 iOS Build Support를 설치한다(동의 후, W1 배경 작업). 필요하면 R2에서 Rosetta 2와 Xcode 26.x를 설치한다.
 6. (R3 전) EOG 계정을 만든다. lbsc.kr G9 질의는 W1에 발송한다(초안 제공).
-7. (W3 전) **Neon 계정과 프로젝트를 만든다**(ADR-015, `docs/DB-PLAN.md` 11.3).
-   - 프로젝트 이름 `starindex`, Postgres 18, AWS Asia Pacific (Singapore)
-   - Compute 자동 확장 상한을 0.25 CU로 둔다.
+7. (W3 전) **Neon 계정과 프로젝트를 만든다**(ADR-015, `docs/DB-PLAN.md` 11.3). **완료(10-01)**: `star_index`, Postgres 18, Singapore. 실제 Neon 검증도 끝났다(DB-PLAN 11.7).
+   - 컴퓨트 크기는 Free에서 바꿀 수 없다. 첫 주 CU-시간만 확인한다.
    - 직접(pooled 아님) 연결 호스트를 `app.env`의 `DB_URL`에 넣는다.
    - `neondb_owner` 비밀번호는 EC2에 저장하지 말고, `bootstrap-db.sh`가 물을 때 입력한다.
    - 출시 전에 Neon 약관(무료 플랜 상업적 이용)을 확인한다.

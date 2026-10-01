@@ -11,7 +11,8 @@
 ## 체크리스트(W3)
 - [ ] `aws ec2 describe-instance-credit-specifications` = standard
 - [ ] (시연에 RDS를 쓰는 경우) RDS for PostgreSQL **18**, db.t4g.micro, Single-AZ, Performance Insights off, 퍼블릭 액세스 off. 시연 뒤 최종 스냅숏 → 삭제(DB-PLAN 11.9)
-- [ ] Neon: 프로젝트(PG 18, 싱가포르), 컴퓨트 상한 0.25 CU, `bootstrap-db.sh` 완료, 백업 타이머 켜짐, 복구 리허설 1회(DB-PLAN 11.3, 11.5)
+- [x] Neon 프로젝트(PG 18, 싱가포르, 10-01 생성·실검증)
+- [ ] Neon: `bootstrap-db.sh` 완료, 백업 타이머 켜짐, 복구 리허설 1회(DB-PLAN 11.3, 11.5)
 - [ ] Neon Usage: 첫 주 매일 CU-시간 확인(예상 월 약 12, 한도 100)
 - [ ] NAT Gateway 0, Elastic IP 1
 - [ ] Budgets 월 30 USD(50/80/100% 알림)
