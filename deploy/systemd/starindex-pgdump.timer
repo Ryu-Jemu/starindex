@@ -1,0 +1,10 @@
+# 19:40 UTC = 04:40 KST, after the night's ETL and before the morning issues. Written in UTC so no time zone suffix is needed.
+[Unit]
+Description=Daily StarIndex pg_dump
+
+[Timer]
+OnCalendar=*-*-* 19:40:00 UTC
+Persistent=true
+
+[Install]
+WantedBy=timers.target
