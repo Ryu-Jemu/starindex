@@ -9,7 +9,9 @@ spring:
     username: ${DB_USERNAME:starindex}
     password: ${DB_PASSWORD:starindex-local}
     hikari:
-      maximum-pool-size: 10
+      maximum-pool-size: 5      # batch + admin web; PostgreSQL max_connections=20 on the 2 GiB EC2 (DB-PLAN 4.4)
+      minimum-idle: 1
+      idle-timeout: 600000      # ms (Hikari takes a number, not "10m")
   jpa:
     open-in-view: false
     hibernate:

@@ -7,7 +7,8 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 
 /**
  * Singleton containers shared by every integration test class (started once per JVM), so the Spring context
- * cache is reused across classes. PostgreSQL 18 = the planned RDS major; Valkey 8 = Redis-compatible store.
+ * cache is reused across classes. PostgreSQL 18 = the production major (EC2 install, RDS-compatible, ADR-014), locale C
+ * like the EC2 database; Valkey 8 = Redis-compatible store.
  */
 @SpringBootTest(properties = {
         "spring.data.redis.repositories.enabled=false",
@@ -16,7 +17,8 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 public abstract class IntegrationTestBase {
 
     @ServiceConnection
-    static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18");
+    static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18")
+            .withEnv("POSTGRES_INITDB_ARGS", "--locale=C --encoding=UTF8");
 
     @ServiceConnection(name = "redis")
     static final GenericContainer<?> VALKEY = new GenericContainer<>("valkey/valkey:8").withExposedPorts(6379);

@@ -11,9 +11,10 @@
 #
 # The key goes in backend/.env as DATA_GO_KR_SERVICE_KEY=<data.go.kr 일반 인증키 (Decoding)>; nothing else to set.
 # Packs are written to backend/build/packs (PACK_LOCAL_DIR). Exit code: 0 = COMPLETED, non-zero = FAILED.
+# JAVA_OPTS is passed to java (e.g. the EC2 line of deploy/app/app.env.example).
 set -euo pipefail
 
-usage() { sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+usage() { sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 [ $# -ge 1 ] || usage
 
 here="$(cd "$(dirname "$0")/.." && pwd)"
@@ -68,9 +69,14 @@ done
 # Build (incremental) and run the boot jar directly: clean output and the job's exit code (0 = COMPLETED).
 # The [ETL] summary block replaces Spring Batch's step stack trace here (the server keeps it).
 ./gradlew -q --console=plain bootJar
-jar="$(ls -t build/libs/*.jar | grep -v -- '-plain.jar' | head -1)"
-# shellcheck disable=SC2086
-exec java -jar "$jar" --spring.main.web-application-type=none --spring.main.banner-mode=off \
+jar=""   # newest boot jar (not the -plain one)
+for f in build/libs/*.jar; do
+  [[ "$f" == *-plain.jar ]] && continue
+  { [ -z "$jar" ] || [ "$f" -nt "$jar" ]; } && jar="$f"
+done
+[ -n "$jar" ] || { echo "no boot jar in backend/build/libs" >&2; exit 1; }
+# shellcheck disable=SC2086  # JAVA_OPTS and params are word lists
+exec java ${JAVA_OPTS:-} -jar "$jar" --spring.main.web-application-type=none --spring.main.banner-mode=off \
   --spring.batch.job.enabled=true --spring.batch.job.name="$job" \
   --logging.level.root=WARN --logging.level.ETL=INFO --logging.level.io.netty.resolver.dns=ERROR \
   --logging.level.org.springframework.batch.core.step.AbstractStep=OFF $params

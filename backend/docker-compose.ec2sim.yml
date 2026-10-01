@@ -1,0 +1,16 @@
+# EC2 (t4g.small) rehearsal for scripts/ec2sim.sh (DB-PLAN 6.2): the same containers with the EC2 memory limits and
+# the PostgreSQL settings of deploy/postgres/tune.sql (ec2sim.sh checks the memory values match).
+#   docker compose -f docker-compose.yml -f docker-compose.ec2sim.yml up -d
+# Running plain docker-compose.yml again recreates the containers without limits.
+services:
+  postgres:
+    mem_limit: 320m
+    memswap_limit: 320m
+    command: ["postgres",
+              "-c", "max_connections=20", "-c", "shared_buffers=128MB", "-c", "effective_cache_size=256MB",
+              "-c", "work_mem=4MB", "-c", "maintenance_work_mem=32MB", "-c", "huge_pages=off",
+              "-c", "max_wal_size=256MB", "-c", "min_wal_size=64MB", "-c", "checkpoint_timeout=15min",
+              "-c", "idle_in_transaction_session_timeout=5min", "-c", "log_min_duration_statement=1s"]
+  valkey:
+    mem_limit: 160m
+    memswap_limit: 160m
