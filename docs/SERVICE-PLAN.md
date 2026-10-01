@@ -1035,13 +1035,13 @@ StarIndex (최소 iOS 26.1, ADR-011)
 ---
 
 ### Critical Files for Implementation
-- /Users/ryujemu/Desktop/Knowledge Graph/5주차/personal_project/docs/PLAN.md
-- /Users/ryujemu/Desktop/Knowledge Graph/5주차/personal_project/ios/App/Features/Sky/SkySnapshot.swift
-- /Users/ryujemu/Desktop/Knowledge Graph/5주차/personal_project/ios/Packages/SkyCore/Sources/SkyCore/Sky/TwilightMagnitude.swift
-- /Users/ryujemu/Desktop/Knowledge Graph/5주차/personal_project/ios/App/Shaders/SkyColor.metal
-- /Users/ryujemu/Desktop/Knowledge Graph/5주차/personal_project/ios/App/Features/Sky/SkyScreen.swift
-- /Users/ryujemu/Desktop/Knowledge Graph/5주차/personal_project/ios/App/Features/Sky/ObjectDetailSheet.swift
-- /Users/ryujemu/Desktop/Knowledge Graph/5주차/personal_project/docs/verification/W2-status.md
+- docs/PLAN.md
+- ios/App/Features/Sky/SkySnapshot.swift
+- ios/Packages/SkyCore/Sources/SkyCore/Sky/TwilightMagnitude.swift
+- ios/App/Shaders/SkyColor.metal
+- ios/App/Features/Sky/SkyScreen.swift
+- ios/App/Features/Sky/ObjectDetailSheet.swift
+- docs/verification/W2-status.md
 
 ---
 

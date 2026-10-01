@@ -7,7 +7,7 @@
 > - EC2에 실제로 설치하는 일과 RDS→EC2 전환은 AWS 작업(W3) 때 한다.
 > - 대신 설치 스크립트는 Amazon Linux 2023 컨테이너에서(`scripts/deploy-check.sh`, 47/47), 메모리 예산은 arm64 컨테이너 모사로(`scripts/ec2sim.sh`, 647/1,600MiB) 미리 검증했다.
 
-작성일은 2026-09-30입니다. 대상 저장소는 `/Users/ryujemu/Desktop/Knowledge Graph/5주차/personal_project`입니다. 이 문서는 `docs/DB-PLAN.md`로 저장되고, 구현할 때 기준으로 씁니다. 검토 의견 20건을 어떻게 처리했는지는 부록 A에 정리했습니다.
+작성일은 2026-09-30입니다. 대상 저장소는 `/Users/ryujemu/Developer/Knowledge Graph/5주차/personal_project`입니다(2026-10-01 iCloud 동기화 폴더 `~/Desktop`에서 옮김). 이 문서는 `docs/DB-PLAN.md`로 저장되고, 구현할 때 기준으로 씁니다. 검토 의견 20건을 어떻게 처리했는지는 부록 A에 정리했습니다.
 
 표기 규칙은 다음과 같습니다.
 - [확실]: 코드나 문서를 직접 읽었거나, URL을 직접 열어 확인한 것
@@ -901,8 +901,8 @@ M0 동결 전 평일 여유는 약 2일입니다(SERVICE-PLAN 7.1). 그래서 **
 ---
 
 ### Critical Files for Implementation
-- /Users/ryujemu/Desktop/Knowledge Graph/5주차/personal_project/backend/src/main/java/dev/starindex/etl/EtlRepository.java
-- /Users/ryujemu/Desktop/Knowledge Graph/5주차/personal_project/backend/src/main/java/dev/starindex/etl/EtlJobsConfig.java (+ 신규 etl/RetentionService.java, etl/EtlProperties.java)
-- /Users/ryujemu/Desktop/Knowledge Graph/5주차/personal_project/backend/src/main/java/dev/starindex/etl/kma/KmaForecastClient.java
-- /Users/ryujemu/Desktop/Knowledge Graph/5주차/personal_project/backend/src/main/java/dev/starindex/pack/PackPublisher.java (+ PackStore.java, LocalPackStore.java)
-- /Users/ryujemu/Desktop/Knowledge Graph/5주차/personal_project/backend/src/test/java/dev/starindex/etl/EtlJobsIntegrationTest.java (+ EtlWithoutKeyTest.java, IntegrationTestBase.java, backend/src/main/resources/db/migration/V5~V7)
+- backend/src/main/java/dev/starindex/etl/EtlRepository.java
+- backend/src/main/java/dev/starindex/etl/EtlJobsConfig.java (+ 신규 etl/RetentionService.java, etl/EtlProperties.java)
+- backend/src/main/java/dev/starindex/etl/kma/KmaForecastClient.java
+- backend/src/main/java/dev/starindex/pack/PackPublisher.java (+ PackStore.java, LocalPackStore.java)
+- backend/src/test/java/dev/starindex/etl/EtlJobsIntegrationTest.java (+ EtlWithoutKeyTest.java, IntegrationTestBase.java, backend/src/main/resources/db/migration/V5~V7)

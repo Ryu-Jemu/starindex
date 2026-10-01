@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Runs the SkyCore Swift package tests (G1a) on macOS.
 #
-# - Build products go OUTSIDE the repo: ~/Desktop is iCloud-synced (File Provider), which adds
-#   FinderInfo xattrs to bundles and makes codesign fail ("resource fork, Finder information, or
-#   similar detritus not allowed").
+# - Build products go OUTSIDE the repo. The repo lived in iCloud-synced ~/Desktop until 2026-10-01
+#   (now ~/Developer); File Provider added FinderInfo xattrs to bundles and made codesign fail
+#   ("resource fork, Finder information, or similar detritus not allowed"). Keep the cache anyway.
 # - With the Command Line Tools toolchain, Swift Testing's macro plugin path must be passed
 #   explicitly.
 set -euo pipefail

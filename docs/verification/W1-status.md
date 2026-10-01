@@ -23,7 +23,7 @@
 ## 환경 메모
 - Xcode 라이선스에 동의하기 전까지 `/usr/bin/git`과 swift shim이 막혀 있다. `source scripts/dev-env.sh`로 CLT(git 2.54, Swift 6.4)를 쓴다.
 - CLT의 SwiftPM ManifestAPI에 2024년 CLT에서 남은 `*.private.swiftinterface`가 섞여 있어 매니페스트 링크가 실패한다. 캐시에 둔 정리본을 `SWIFTPM_CUSTOM_LIBS_DIR`로 지정해 해결했다(시스템 파일은 수정하지 않음).
-- `~/Desktop`은 iCloud(File Provider) 동기화 폴더다. 빌드 산출물에 FinderInfo xattr이 붙어 codesign이 실패하므로, SwiftPM `--scratch-path`를 캐시 폴더로 둔다.
+- `~/Desktop`은 iCloud(File Provider) 동기화 폴더다. 빌드 산출물에 FinderInfo xattr이 붙어 codesign이 실패하므로, SwiftPM `--scratch-path`를 캐시 폴더로 둔다. (2026-10-01: 저장소를 `~/Developer`로 옮겼다. 캐시 설정은 그대로 둔다.)
 - CLT의 Swift Testing은 매크로 플러그인 경로(`-plugin-path …/host/plugins/testing`)를 명시해야 한다.
 
 ## 리뷰 반영 (SkyCore 적대적 리뷰: 3렌즈 → 각 finding마다 반박 검증)
