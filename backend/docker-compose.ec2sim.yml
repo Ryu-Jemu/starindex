@@ -1,8 +1,0 @@
-# EC2 (t4g.small) rehearsal for scripts/ec2sim.sh (DB-PLAN 6.2, ADR-015). The database is Neon, not on the EC2, so
-# postgres runs unlimited as a stand-in and only Valkey gets its EC2 limit.
-#   docker compose -f docker-compose.yml -f docker-compose.ec2sim.yml up -d
-# Running plain docker-compose.yml again recreates the containers without limits.
-services:
-  valkey:
-    mem_limit: 160m
-    memswap_limit: 160m

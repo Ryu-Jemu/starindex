@@ -38,8 +38,8 @@ spring:
 
 server:
   port: 8080
-  # OriginVerifyFilter trusts only the TCP peer address: X-Forwarded-* must never be honoured (Boot could otherwise
-  # auto-enable it on some platforms), or a forged header could pose as the loopback SSM tunnel.
+  # LocalOnlyFilter trusts only the TCP peer address: X-Forwarded-* must never be honoured (Boot could otherwise
+  # auto-enable it on some platforms), or a forged header could pose as loopback.
   forward-headers-strategy: none
   tomcat:
     use-relative-redirects: true
@@ -84,22 +84,18 @@ starindex:
   pack:
     local-dir: ${PACK_LOCAL_DIR:build/packs}
     hourly-slots: 72
-    # EC2: the bucket behind CloudFront (S3_BUCKET in app.env). Empty → local-dir (development, tests, ec2sim).
-    s3-bucket: ${S3_BUCKET:}
-    s3-region: ${AWS_REGION:ap-northeast-2}
-  metrics:
-    enabled: ${METRICS_ENABLED:false}   # StarIndex/PackAgeMinutes to CloudWatch every 5 min (EC2 only)
-    region: ${AWS_REGION:ap-northeast-2}
-  security:
-    # The value CloudFront sends as X-Origin-Verify (SSM /starindex/cloudfront/origin-verify via start.sh).
-    # Empty → nothing through CloudFront is accepted; loopback still is (local development, SSM tunnel).
-    origin-verify-secret: ${ORIGIN_VERIFY_SECRET:}
+    # The Neon Object Storage public_read bucket the app downloads from (ADR-017), over its S3-compatible API.
+    # Credentials: AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY = a Neon storage credential (token_id / s3 secret);
+    # the names are the S3 SDK's, no AWS account is involved. Empty bucket → local-dir (development, tests).
+    s3-bucket: ${PACK_BUCKET:}
+    s3-endpoint: ${AWS_ENDPOINT_URL_S3:}     # https://br-<branch>.storage.c-<N>.aws-ap-southeast-1… (path-style only)
+    s3-region: ${AWS_REGION:ap-southeast-1}
   admin:
     username: ${ADMIN_USERNAME:admin}
-    # bcrypt ($2a$/$2b$/$2y$), SSM /starindex/admin/password-hash. Empty → admin login answers 503.
+    # bcrypt ($2a$/$2b$/$2y$). Empty → admin login answers 503.
     # Local: htpasswd -nbBC 12 "" '<password>' | tr -d ':\n'  → ADMIN_PASSWORD_HASH=... in backend/.env
     password-hash: ${ADMIN_PASSWORD_HASH:}
-    # base64 ≥32 bytes, SSM /starindex/admin/jwt-secret. Empty → random per process (tokens die on restart).
+    # base64 ≥32 bytes. Empty → random per process (tokens die on restart; fine for a local tool).
     jwt-secret: ${ADMIN_JWT_SECRET:}
     token-ttl: 1h
     max-failures: 5

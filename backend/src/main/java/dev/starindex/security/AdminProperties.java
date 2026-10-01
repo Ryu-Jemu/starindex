@@ -4,10 +4,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 
 import java.time.Duration;
 
-/**
- * {@code starindex.admin.*} and {@code starindex.security.*}. On EC2 the secrets come from SSM SecureString through
- * deploy/app/start.sh (ADMIN_PASSWORD_HASH, ADMIN_JWT_SECRET, ORIGIN_VERIFY_SECRET); nothing secret is in app.env.
- */
+/** {@code starindex.admin.*}: the local admin page's single login (backend/.env: ADMIN_PASSWORD_HASH, ADMIN_JWT_SECRET). */
 public final class AdminProperties {
     private AdminProperties() {}
 
@@ -27,8 +24,4 @@ public final class AdminProperties {
 
         public boolean loginEnabled() { return passwordHash != null && !passwordHash.isBlank(); }
     }
-
-    /** @param originVerifySecret value CloudFront sends in X-Origin-Verify; empty → only loopback is served */
-    @ConfigurationProperties("starindex.security")
-    public record Security(String originVerifySecret) {}
 }

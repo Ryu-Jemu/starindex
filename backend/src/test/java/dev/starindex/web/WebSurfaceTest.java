@@ -32,19 +32,17 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 /**
- * Port 8080's two audiences (PLAN 3.4 보안 필터): CloudFront with X-Origin-Verify gets health, /api/v1 and /ws/v1
- * only; the SSM tunnel (loopback) gets the admin page and, with a JWT, /api/admin. Everyone else gets 403.
+ * The local operator server (ADR-017): loopback only, the admin page for anyone on the Mac, /api/admin with a JWT.
+ * Any other address gets 403, whatever headers it sends.
  */
 @AutoConfigureMockMvc
 @Import(WebSurfaceTest.SlowJobConfig.class)
 class WebSurfaceTest extends IntegrationTestBase {
-    static final String SECRET = "test-origin-secret-0123456789abcdef";
     static final String PASSWORD = "correct horse battery staple";
     static final CountDownLatch RELEASE = new CountDownLatch(1);
 
     @DynamicPropertySource
     static void props(DynamicPropertyRegistry r) {
-        r.add("starindex.security.origin-verify-secret", () -> SECRET);
         r.add("starindex.admin.password-hash", () -> new BCryptPasswordEncoder(4).encode(PASSWORD));
     }
 
@@ -67,44 +65,32 @@ class WebSurfaceTest extends IntegrationTestBase {
         return r -> { r.setRemoteAddr(ip); return r; };
     }
 
-    static MockHttpServletRequestBuilder viaCloudFront(MockHttpServletRequestBuilder b) {
-        return b.header("X-Origin-Verify", SECRET).with(from("13.124.199.10"));
-    }
-
-    // ---------------------------------------------------------------- origin filter
+    // ---------------------------------------------------------------- loopback only
 
     @Test
     void healthIsUpWithoutTouchingTheDatabase() throws Exception {
         mvc.perform(get("/api/health")).andExpect(status().isOk()).andExpect(jsonPath("$.status").value("UP"));
-        mvc.perform(viaCloudFront(get("/api/health"))).andExpect(status().isOk());
+        mvc.perform(get("/api/health").with(from("::1"))).andExpect(status().isOk());
     }
 
     @Test
-    void directInternetTrafficIsRefusedEvenWithAForgedForwardedFor() throws Exception {
-        mvc.perform(get("/api/health").with(from("198.51.100.7"))).andExpect(status().isForbidden());
-        mvc.perform(get("/api/health").with(from("198.51.100.7")).header("X-Forwarded-For", "127.0.0.1")
-                .header("Forwarded", "for=127.0.0.1")).andExpect(status().isForbidden());
-        mvc.perform(get("/admin/index.html").with(from("198.51.100.7"))).andExpect(status().isForbidden());
-    }
-
-    @Test
-    void wrongOriginSecretIsRefused() throws Exception {
-        mvc.perform(get("/api/health").header("X-Origin-Verify", "nope").with(from("13.124.199.10"))).andExpect(status().isForbidden());
-        mvc.perform(get("/api/health").header("X-Origin-Verify", SECRET + "x").with(from("13.124.199.10"))).andExpect(status().isForbidden());
-    }
-
-    @Test
-    void cloudFrontNeverReachesAdminPaths() throws Exception {
+    void otherAddressesAreRefusedEvenWithForgedForwardingHeaders() throws Exception {
         String token = login("127.0.0.11");
-        mvc.perform(viaCloudFront(get("/admin"))).andExpect(status().isForbidden());
-        mvc.perform(viaCloudFront(get("/admin/index.html"))).andExpect(status().isForbidden());
-        mvc.perform(viaCloudFront(post("/api/admin/auth/login").contentType(MediaType.APPLICATION_JSON)
-                .content("{\"username\":\"admin\",\"password\":\"" + PASSWORD + "\"}"))).andExpect(status().isForbidden());
-        mvc.perform(viaCloudFront(get("/api/admin/etl/runs")).header("Authorization", "Bearer " + token)).andExpect(status().isForbidden());
-        mvc.perform(viaCloudFront(get("/api/v1/../admin/index.html"))).andExpect(status().isForbidden());
-        mvc.perform(viaCloudFront(get("/api/v1/%2e%2e/admin/index.html"))).andExpect(status().isForbidden());
-        mvc.perform(viaCloudFront(get("/api/v1;x/admin"))).andExpect(status().isForbidden());
-        mvc.perform(viaCloudFront(get("/actuator/health"))).andExpect(status().isForbidden());
+        for (String ip : new String[]{"198.51.100.7", "192.168.0.10", "10.0.0.2"}) {
+            mvc.perform(get("/api/health").with(from(ip))).andExpect(status().isForbidden());
+            mvc.perform(get("/api/health").with(from(ip)).header("X-Forwarded-For", "127.0.0.1")
+                    .header("Forwarded", "for=127.0.0.1").header("X-Real-IP", "127.0.0.1")).andExpect(status().isForbidden());
+            mvc.perform(get("/admin/index.html").with(from(ip))).andExpect(status().isForbidden());
+            mvc.perform(post("/api/admin/auth/login").with(from(ip)).contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"username\":\"admin\",\"password\":\"" + PASSWORD + "\"}")).andExpect(status().isForbidden());
+            mvc.perform(get("/api/admin/etl/runs").with(from(ip)).header("Authorization", "Bearer " + token)).andExpect(status().isForbidden());
+        }
+    }
+
+    @Test
+    void unknownPathsAreDenied() throws Exception {
+        mvc.perform(get("/favicon.ico")).andExpect(status().is4xxClientError());   // 401: denyAll answers through the bearer entry point
+        mvc.perform(get("/api/admin/../admin/index.html")).andExpect(status().is4xxClientError());
     }
 
     @Test

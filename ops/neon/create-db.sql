@@ -1,5 +1,5 @@
--- Owner role and database (ADR-015, DB-PLAN 11). Run by bootstrap-db.sh / restore.sh with the ADMIN login:
--- Neon neondb_owner on neondb, RDS master user on postgres, or any CREATEROLE CREATEDB role. Never a superuser need.
+-- Owner role and database (ADR-015, ADR-017). Run by ops/neon/bootstrap.sh / restore.sh with the ADMIN login:
+-- Neon neondb_owner on neondb, or any CREATEROLE CREATEDB role. Never a superuser need.
 --   psql -v ON_ERROR_STOP=1 -v dbname=starindex < create-db.sql
 -- Idempotent. The password is set separately through stdin, never on a command line.
 -- The role is created with SQL, so it has plain privileges (no neon_superuser, no CREATEDB).

@@ -1,6 +1,10 @@
 package dev.starindex.pack;
 
+import software.amazon.awssdk.core.checksums.RequestChecksumCalculation;
+import software.amazon.awssdk.core.checksums.ResponseChecksumValidation;
 import software.amazon.awssdk.core.sync.RequestBody;
+import software.amazon.awssdk.http.urlconnection.UrlConnectionHttpClient;
+import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
@@ -9,15 +13,17 @@ import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.model.S3Object;
 
+import java.net.URI;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
 
 /**
- * Packs in the S3 bucket behind CloudFront (PLAN 3.4): {@code packs/manifest/latest.json} (max-age=60) and immutable
- * {@code packs/{kind}/{version}/…}. Same paths as {@link LocalPackStore}. Every PUT replaces the object atomically, so a
- * client never reads half a pack; objects are not public (the bucket policy allows CloudFront's OAC only).
+ * Packs in an S3-compatible bucket, the Neon Object Storage public_read bucket in production (ADR-017):
+ * {@code packs/manifest/latest.json} (max-age=60) and immutable {@code packs/{kind}/{version}/…}. Same paths as
+ * {@link LocalPackStore}. Every PUT replaces the object atomically, so a client never reads half a pack. Neon stores
+ * Content-Type and Cache-Control and returns them on GET (its S3 compatibility page), which the app's caching uses.
  */
 public class S3PackStore implements PackStore {
     private final S3Client s3;
@@ -26,6 +32,23 @@ public class S3PackStore implements PackStore {
     public S3PackStore(S3Client s3, String bucket) {
         this.s3 = s3;
         this.bucket = bucket;
+    }
+
+    /**
+     * Client for an S3-compatible endpoint (Neon Object Storage; S3Mock in tests): path-style addressing (Neon supports
+     * nothing else), and checksums only where the S3 API requires them (recent SDKs add CRC trailers to every upload
+     * by default, which compatible servers do not all accept). Credentials come from the SDK's default chain:
+     * AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY hold a Neon storage credential (token_id / s3_secret_access_key).
+     */
+    public static S3PackStore create(String bucket, String endpoint, String region) {
+        if (endpoint == null || endpoint.isBlank())
+            throw new IllegalStateException("PACK_BUCKET is set but AWS_ENDPOINT_URL_S3 (the storage endpoint) is empty");
+        S3Client client = S3Client.builder().region(Region.of(region)).endpointOverride(URI.create(endpoint))
+                .forcePathStyle(true).httpClient(UrlConnectionHttpClient.create())
+                .requestChecksumCalculation(RequestChecksumCalculation.WHEN_REQUIRED)
+                .responseChecksumValidation(ResponseChecksumValidation.WHEN_REQUIRED)
+                .build();
+        return new S3PackStore(client, bucket);
     }
 
     private static String key(String path) {

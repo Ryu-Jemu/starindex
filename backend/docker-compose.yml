@@ -1,6 +1,7 @@
-# Local development: PostgreSQL 18 (same major and locale C as the EC2 install, ADR-014) + Valkey 8 (Redis-compatible, ADR-005).
-# EC2 memory rehearsal: scripts/ec2sim.sh (adds docker-compose.ec2sim.yml).
-# Usage: docker compose -f backend/docker-compose.yml up -d
+# Local development: PostgreSQL 18 (Neon's major, locale C like ops/neon/create-db.sql) + Valkey 8 (Redis-compatible,
+# ADR-005). Profile "storage" adds S3Mock as a stand-in for the Neon Object Storage public bucket (ADR-017):
+# anonymous GETs like the public bucket, S3 API for the ETL. scripts/etl-local-e2e.sh uses it.
+# Usage: docker compose -f backend/docker-compose.yml up -d   (add --profile storage for the bucket)
 # Host ports 15432/16379 (not 5432/6379) so they never collide with other local PostgreSQL/Redis instances.
 services:
   postgres:
@@ -29,6 +30,14 @@ services:
       test: ["CMD", "valkey-cli", "ping"]
       interval: 5s
       retries: 20
+
+  storage:
+    image: adobe/s3mock:5.2.3
+    container_name: starindex-storage
+    profiles: ["storage"]
+    environment:
+      COM_ADOBE_TESTING_S3MOCK_STORE_INITIAL_BUCKETS: starindex-packs
+    ports: ["127.0.0.1:19090:9090"]
 
 volumes:
   postgres-data:

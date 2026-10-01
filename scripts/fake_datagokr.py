@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""data.go.kr stand-in for scripts/ec2sim.sh (DB-PLAN 6.2).
+"""data.go.kr stand-in for scripts/etl-local-e2e.sh (no service key needed).
 
 Answers the five APIs the ETL calls with fixed, well-formed XML in the shapes of backend/src/test/.../Fixtures.java,
 so the jobs run end to end without a service key. Listens on 127.0.0.1 only.
-    python3 scripts/ec2sim_stub.py 18089
+    python3 scripts/fake_datagokr.py 18089
 """
 import datetime as dt
 import sys

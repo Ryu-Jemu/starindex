@@ -17,9 +17,9 @@ import org.springframework.web.socket.config.annotation.WebSocketHandlerRegistry
 import java.nio.charset.StandardCharsets;
 
 /**
- * {@code /ws/v1/live} behind CloudFront (PLAN 3.4 WebSocket). Redis Pub/Sub {@code ch:live} fans out pack
- * notifications from whichever JVM published (the server's scheduler or a CLI run via scripts/etl.sh).
- * Native apps send no Origin header and are accepted; browsers on other origins are refused (Spring's default).
+ * {@code /ws/v1/live} on the local server (PLAN 3.4 WebSocket; no public server since ADR-017, so the app polls the
+ * bucket manifest instead). Redis Pub/Sub {@code ch:live} fans out pack notifications from whichever JVM published
+ * on the same Valkey (the local scheduler or scripts/etl.sh). Browsers on other origins are refused (Spring default).
  */
 @ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.SERVLET)
 @Configuration

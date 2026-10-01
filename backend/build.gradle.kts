@@ -28,14 +28,10 @@ dependencies {
     // Admin API only (PLAN D11): HS256 JWT issued by /api/admin/auth/login, verified by the resource server.
     implementation("org.springframework.boot:spring-boot-starter-security-oauth2-resource-server")
 
-    // S3 packs + CloudWatch PackAgeMinutes (PLAN 3.4/3.5). The JDK URLConnection client instead of Apache/Netty:
-    // a handful of calls per hour on a 2 GB instance does not need a connection-pooling HTTP stack.
+    // S3 protocol client for the Neon Object Storage pack bucket (ADR-017; no AWS account involved). The JDK
+    // URLConnection client instead of Apache/Netty: a few calls per ETL run need no connection-pooling HTTP stack.
     implementation(platform("software.amazon.awssdk:bom:$awsSdkVersion"))
     implementation("software.amazon.awssdk:s3") {
-        exclude(group = "software.amazon.awssdk", module = "apache-client")
-        exclude(group = "software.amazon.awssdk", module = "netty-nio-client")
-    }
-    implementation("software.amazon.awssdk:cloudwatch") {
         exclude(group = "software.amazon.awssdk", module = "apache-client")
         exclude(group = "software.amazon.awssdk", module = "netty-nio-client")
     }

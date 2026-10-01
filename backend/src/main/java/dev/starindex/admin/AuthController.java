@@ -22,9 +22,9 @@ import java.nio.charset.StandardCharsets;
 import java.util.Map;
 
 /**
- * Operator login (PLAN 3.4 {@code /api/admin/auth/login}). One account from configuration (bcrypt hash in SSM).
- * Five failures from one address lock it for 15 minutes ({@code auth:fail:{ip}} in Redis). Through the SSM tunnel
- * every request comes from loopback, so in practice the lock is global, which is what a single-operator page wants.
+ * Operator login (PLAN 3.4 {@code /api/admin/auth/login}). One account from configuration (bcrypt hash in backend/.env).
+ * Five failures from one address lock it for 15 minutes ({@code auth:fail:{ip}} in Redis). Only loopback reaches the
+ * server, so in practice the lock is global, which is what a single-operator page wants.
  */
 @ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.SERVLET)
 @RestController

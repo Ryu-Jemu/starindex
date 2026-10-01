@@ -7,8 +7,8 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 
 /**
  * Singleton containers shared by every integration test class (started once per JVM), so the Spring context
- * cache is reused across classes. PostgreSQL 18 = the production major (EC2 install, RDS-compatible, ADR-014), locale C
- * like the EC2 database; Valkey 8 = Redis-compatible store.
+ * cache is reused across classes. PostgreSQL 18 = the production major (Neon, ADR-015), locale C like the database
+ * bootstrap creates; Valkey 8 = Redis-compatible store.
  */
 @SpringBootTest(properties = {
         "spring.data.redis.repositories.enabled=false",

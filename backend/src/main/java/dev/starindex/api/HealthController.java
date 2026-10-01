@@ -6,8 +6,8 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.Map;
 
 /**
- * Public liveness for CloudFront checks and W3 criterion ①. It never touches the database: a periodic probe of
- * {@code /actuator/health} (db indicator) would keep Neon's compute awake around the clock (ADR-015).
+ * Liveness of the local server. It never touches the database: a periodic probe of {@code /actuator/health} (db
+ * indicator) would keep Neon's compute awake (ADR-015).
  */
 @RestController
 public class HealthController {

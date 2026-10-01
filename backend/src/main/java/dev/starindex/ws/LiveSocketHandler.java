@@ -26,7 +26,7 @@ import java.util.function.LongSupplier;
  * that cannot send protocol-level pings; anything else is ignored.
  * <p>The server pings every session each minute ({@link #sweep}) and closes one that has not answered (pong or any
  * message) for {@link #DEAD_AFTER}: a phone that lost the network leaves a half-open TCP connection that would otherwise
- * hold one of the {@code maxSessions} slots forever. The pings also keep idle connections open through CloudFront.
+ * hold one of the {@code maxSessions} slots forever.
  */
 public class LiveSocketHandler extends TextWebSocketHandler {
     private static final Logger log = LoggerFactory.getLogger(LiveSocketHandler.class);

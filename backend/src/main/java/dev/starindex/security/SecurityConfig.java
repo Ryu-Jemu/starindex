@@ -14,20 +14,19 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 
 /**
- * Port 8080 has two audiences (PLAN 3.4/3.5): the public app traffic through CloudFront (health, /api/v1, /ws/v1)
- * and the operator through the SSM tunnel (admin page and /api/admin with a bearer JWT). {@link OriginVerifyFilter}
- * runs first and decides who may reach what; this chain then requires a token for /api/admin.
- * No cookies or sessions anywhere, so CSRF protection has nothing to protect.
+ * The server runs on the operator's Mac only (ADR-017): {@link LocalOnlyFilter} refuses every non-loopback request
+ * first, then this chain requires a bearer JWT for /api/admin (PLAN D11). No cookies or sessions anywhere, so CSRF
+ * protection has nothing to protect.
  */
 // Not in CLI runs (scripts/etl.sh: web-application-type=none): there is no HTTP surface to protect.
 @ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.SERVLET)
 @Configuration
-@EnableConfigurationProperties({AdminProperties.Admin.class, AdminProperties.Security.class})
+@EnableConfigurationProperties(AdminProperties.Admin.class)
 public class SecurityConfig {
 
     @Bean
-    FilterRegistrationBean<OriginVerifyFilter> originVerifyFilter(AdminProperties.Security props) {
-        var reg = new FilterRegistrationBean<>(new OriginVerifyFilter(props.originVerifySecret()));
+    FilterRegistrationBean<LocalOnlyFilter> localOnlyFilter() {
+        var reg = new FilterRegistrationBean<>(new LocalOnlyFilter());
         reg.setOrder(Ordered.HIGHEST_PRECEDENCE);   // before Spring Security's chain (order -100)
         reg.addUrlPatterns("/*");
         return reg;

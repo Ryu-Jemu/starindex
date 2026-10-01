@@ -4,7 +4,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplicat
 import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.GetMapping;
 
-/** {@code http://localhost:18080/admin} through the SSM tunnel → the static page (classpath:static/admin). */
+/** {@code http://localhost:8080/admin} on the operator's Mac → the static page (classpath:static/admin). */
 @ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.SERVLET)
 @Controller
 public class AdminPageController {

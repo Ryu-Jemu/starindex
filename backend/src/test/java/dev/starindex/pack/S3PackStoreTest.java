@@ -17,7 +17,7 @@ import java.time.Instant;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/** S3PackStore against an S3-compatible server (S3Mock): the metadata CloudFront relies on, listing and deletes. */
+/** S3PackStore against an S3-compatible server (S3Mock): the metadata the app's HTTP caching relies on, listing, deletes. */
 class S3PackStoreTest {
     // Adobe S3Mock (Docker Hub, amd64 + arm64). minio/minio is gone from Docker Hub and quay.io pulls timed out on CI.
     static final GenericContainer<?> S3 = new GenericContainer<>("adobe/s3mock:5.2.3").withExposedPorts(9090)
@@ -28,17 +28,22 @@ class S3PackStoreTest {
     @BeforeAll
     static void start() {
         S3.start();
-        s3 = S3Client.builder().region(Region.AP_NORTHEAST_2)
-                .endpointOverride(URI.create("http://" + S3.getHost() + ":" + S3.getMappedPort(9090))).forcePathStyle(true)
+        String endpoint = "http://" + S3.getHost() + ":" + S3.getMappedPort(9090);
+        // The production factory (path-style, checksums WHEN_REQUIRED) with the default credential chain.
+        System.setProperty("aws.accessKeyId", "test");
+        System.setProperty("aws.secretAccessKey", "test");
+        store = S3PackStore.create("starindex-test", endpoint, "ap-southeast-1");
+        s3 = S3Client.builder().region(Region.AP_SOUTHEAST_1).endpointOverride(URI.create(endpoint)).forcePathStyle(true)
                 .credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create("test", "test")))
                 .httpClient(UrlConnectionHttpClient.create()).build();
         s3.createBucket(b -> b.bucket("starindex-test"));
-        store = new S3PackStore(s3, "starindex-test");
     }
 
     @AfterAll
     static void stop() {
         if (s3 != null) s3.close();
+        System.clearProperty("aws.accessKeyId");
+        System.clearProperty("aws.secretAccessKey");
         S3.stop();
     }
 
@@ -75,5 +80,6 @@ class S3PackStoreTest {
     void refusesPathsOutsideTheBucketLayout() {
         assertThrows(IllegalArgumentException.class, () -> store.put("/packs/x", new byte[0], "a", "b"));
         assertThrows(IllegalArgumentException.class, () -> store.get("packs/../backup/db/x"));
+        assertThrows(IllegalStateException.class, () -> S3PackStore.create("b", "", "ap-southeast-1"));
     }
 }

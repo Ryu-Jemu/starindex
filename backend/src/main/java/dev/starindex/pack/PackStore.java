@@ -5,8 +5,7 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * Where static packs go. Local directory now; the S3 implementation (CloudFront origin, PLAN 3.4) plugs in at W3 with
- * the same paths: {@code packs/index/{version}/index.json.gz} (immutable) and {@code packs/manifest/latest.json}.
+ * Where static packs go: a local directory, or the Neon Object Storage public bucket (ADR-017) with the same paths: {@code packs/index/{version}/index.json.gz} (immutable) and {@code packs/manifest/latest.json}.
  * S3 gets no lifecycle expiry on {@code packs/}: while the ETL is stopped it would delete the live pack (DB-PLAN 4.3).
  */
 public interface PackStore {
