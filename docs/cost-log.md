@@ -4,10 +4,13 @@
 
 | 월 | 단계 | 추정 | 실측(Billing) | 비고 |
 |---|---|---|---|---|
-| 2026-10 | M0 | 8~12 |  | EC2 T4g 무료 체험, RDS는 W3에만 |
+| 2026-10 | M0 | 8~12 |  | EC2 T4g 무료 체험, RDS는 W3 시연 기간에만(이후 스냅숏 뒤 삭제) |
+| 2026-11~12 | R1~R3 | 약 6/월 |  | DB는 EC2에 직접 설치(ADR-014), RDS 없음 |
+| 2027-01~ | 운영 | 약 21/월 |  | EC2 t4g.small + EBS + IPv4 |
 
 ## 체크리스트(W3)
 - [ ] `aws ec2 describe-instance-credit-specifications` = standard
-- [ ] RDS: MySQL **8.4**, Single-AZ, Performance Insights off, 퍼블릭 액세스 off
+- [ ] (시연에 RDS를 쓰는 경우) RDS for PostgreSQL **18**, db.t4g.micro, Single-AZ, Performance Insights off, 퍼블릭 액세스 off. 시연 뒤 최종 스냅숏 → 삭제(DB-PLAN 5.7)
+- [ ] EC2 PostgreSQL 18: `deploy/postgres/install.sh` 완료, 백업 타이머 켜짐, 복구 리허설 1회(DB-PLAN 5.6)
 - [ ] NAT Gateway 0, Elastic IP 1
 - [ ] Budgets 월 30 USD(50/80/100% 알림)

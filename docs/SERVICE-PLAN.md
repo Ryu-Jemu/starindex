@@ -633,7 +633,7 @@ StarIndex (최소 iOS 26.1, ADR-011)
 | 접근성: 보이는 천체 표현과 로터, 용어집 ⓘ, 판정 문구 표 | 1.5 |
 | 적색 관측 모드 최소판(컷 1 기본): 셰이더 `colorMultiply`, 불투명 시트, 탭바 숨김, 밝기 낮춤, 목록 검색 | 1.0 |
 | 은하수 코어 방향 1점 + '보이는 시간'(`rotationEQJtoGAL` [확실, `AstroEngine.swift:48`]). 전체 가이드와 ≤6.5등 카탈로그는 v1.1 | 0.5 |
-| raw collect-only: KMA 17시·23시 발표 원문을 S3에 적재(단기예보는 지난 발표를 나중에 받을 수 없어서 [가능성 높음]) + **ASOS 10곳 21~00시 `dc10Tca` 비결측률 조사(R1 첫 주, G13 선행)** | 1.0 |
+| C9 관측소 스냅숏(기한 11/28): 17시(`d17`)·전날 23시(`p23`) 발표를 수집할 때 ASOS 10곳 격자의 21·22·23·00시 SKY/PTY를 `forecast_verification`에 바로 기록(단기예보는 지난 발표를 나중에 받을 수 없어서 [가능성 높음]. S3 raw와 collect-only는 폐기, ADR-014, DB-PLAN 4.5) + **ASOS 10곳 21~00시 `dc10Tca` 비결측률 조사(R1 첫 주, G13 선행)** | 1.0 |
 
 ### 7.4 R2 'AR 최적 시각 미리보기'(12/15~12/24, Go 8 / No-Go① 7.5 / No-Go③ 0인일)
 
@@ -647,7 +647,7 @@ StarIndex (최소 iOS 26.1, ADR-011)
 
 | 기능 | 인일 |
 |---|---|
-| RDS 복원, raw 재적재, 품질 게이트, 교차검증 Step | 3.0 |
+| 품질 게이트, 교차검증 Step(DB는 R1부터 EC2 PostgreSQL 18이라 RDS 복원·raw 재적재는 없다, ADR-014) | 3.0 |
 | **G6 7일 연속 Job 성공** 대응(달력 시간은 병행, 수정 공수) | 0.5 |
 | 팩 스키마 v2 + 시군구 확대 + **캠핑 체감 필드(TMP, REH, WSD, POP)** | 2.5 |
 | `astroEventsJob`(천문현상, 특일, 음양력) → 이벤트 팩 | 2.0 |
@@ -655,7 +655,7 @@ StarIndex (최소 iOS 26.1, ADR-011)
 | `lightPollutionLoadJob`(VIIRS) + 4.7의 L 연결 | 2.0 |
 | **`skyCatalogBuildJob`**(`PLAN:165`, 빠져 있던 것 복원) | 1.0 |
 | 명소 v1: 수작업 20곳 CRUD, `spotsPublishStep`, 앱 목록·상세, 안전 문구, `updated_at`, 네이버·카카오 딥링크 | 3.5 |
-| 관리자 확장(WS 진행률, 백테스트, 롤백) + 번들 해설 문안 ≤40개(CRUD는 컷 2 기본으로 v1.1) | 2.0 |
+| 관리자 확장(WS 진행률, 백테스트 = `forecast_verification`의 binary-clear-v2 혼동행렬, 롤백은 최신 3개·pinned 팩만, ADR-014) + 번들 해설 문안 ≤40개(CRUD는 컷 2 기본으로 v1.1) | 2.0 |
 | **공개 정적 페이지 '오늘 밤 전국 지수'** + legal 페이지 호스팅(8.6) | 1.0 |
 | T13 재보정(지수 v1.1 계수) | 1.0 |
 
@@ -701,7 +701,7 @@ StarIndex (최소 iOS 26.1, ADR-011)
 ### 8.1 소스와 Job
 | 소스 | Job | 라이선스 | 제품 가치 | 확신도 |
 |---|---|---|---|---|
-| KMA 단기예보 15084084: SKY, PTY + **TMP, REH, WSD, POP** | `forecastIngestJob`(M0 17개 시·도 → R3 시군구 약 250 + 명소 20 격자) | 공공누리 1유형 | 지수, 예보 하늘, 캠핑 체감(이슬점은 기기에서 Magnus 식으로 계산, T−Td ≤2°C면 '이슬 가능') | [가능성 높음] |
+| KMA 단기예보 15084084: SKY, PTY + **TMP, REH, WSD, POP** | `forecastIngestJob`(M0 17개 시·도 → R3 시군구 약 250 + 명소 20 격자). 17시·23시 발표 때 관측소 10곳 스냅숏을 `forecast_verification`에 기록(C9, ADR-014) | 공공누리 1유형 | 지수, 예보 하늘, 캠핑 체감(이슬점은 기기에서 Magnus 식으로 계산, T−Td ≤2°C면 '이슬 가능') | [가능성 높음] |
 | KASI 출몰 15012688 | `astroDailyJob` + 교차검증 | 제한 없음 | '(천문연)' 배지 | [가능성 높음] |
 | KASI 천문현상 15012691 / 특일 15012690 / 음양력 15012679 | `astroEventsJob` | 제한 없음 | 천문현상, 연휴, 음력 | 특일·음양력 [확실, 1차 통합에서 열람] |
 | **KMA ASOS 15057210** | R3 `forecastVerifyJob`(매일 07:00). 과거 조회가 되므로 collect-only는 필요 없다 [가능성 높음] | **공공누리 1유형, `dc10Tca` 있음, 개발 하루 1만 건** | 공개 적중률, T13 | **[확실, data.go.kr/data/15057210/openapi.do]** |
@@ -710,9 +710,13 @@ StarIndex (최소 iOS 26.1, ADR-011)
 | (제외) 에어코리아 | — | 3유형 변경금지 | — | [가능성 높음] |
 
 ### 8.2 새 테이블(Flyway V3~)
-- `forecast_verification`
-  - 필드: night_date, station_id, grid_id, issued_at, lead_hours, forecast_clear, observed_cloud_tenths, n_obs, hit
-- `kasi_special_day`, `kasi_lunar`
+- `verify_station`(C9, DB-PLAN 3.3)
+  - 필드: station_id, name, nx, ny. 관측소 10곳이라 10행이다.
+- `forecast_verification`(C9, R1 첫 주, DB-PLAN 3.3)
+  - 필드: night_date, station_id, issue_kind(`d17`/`p23`), issued_at, sky_codes, pty_codes, forecast_clear, observed_cloud_tenths, n_obs, hit
+  - grid_id와 lead_hours는 두지 않는다. `verify_station`과 `issue_kind`에서 구한다.
+  - 보관 32일(ADR-014)
+- `kasi_special_day`, `kasi_lunar_day`
 - `observing_spot`
   - `source`, `license`, `updated_at`는 필수다.
 - `content_text`
@@ -769,14 +773,15 @@ StarIndex (최소 iOS 26.1, ADR-011)
 | Redis(Valkey) | 쿼터, manifest 캐시, WS Pub/Sub, Job 락, 진행률 |
 | JWT | 관리자 로그인, WS 티켓 |
 | WebSocket | `/ws/admin` 진행률(주 시연), `/ws/v1/live` 새 팩 배너(선택 기능) |
-| RDS MySQL 8.4 | 예보, 채점, 명소, 발행 이력 |
+| PostgreSQL 18(M0 RDS, 이후 EC2 직접 설치, ADR-014) | 예보, 채점, 명소, 발행 이력 |
 | **Bootstrap** | 관리자 화면. 그리고 **공개 정적 페이지 '오늘 밤 전국 지수'**: `publicPageStep`이 Thymeleaf + Bootstrap으로 렌더해 S3 → CloudFront 기본 도메인에 올린다. 위치 입력 없이 17개 시·도 표, 발표 시각, 적중률 요약을 보여 준다. **Support URL과 Marketing URL, 개인정보처리방침 URL을 겸한다.** 정적 파일이라 EC2를 꺼도 떠 있다 |
 
 ### 8.7 과제 종료 후 운영 모드(ADR-012)
-- **비용**(PLAN 3.6 비용 표, 추정)
+- **비용**(PLAN 3.6 비용 표, ADR-014, 추정)
+  - R1부터 2026-12-31까지는 EC2 24/7(DB 포함)로 월 약 6 USD다. RDS는 쓰지 않는다.
   - T4g 무료 체험이 2026-12-31에 끝난다.
-  - 2027-01부터는 24/7 기준 월 약 42 USD(small) / 34 USD(micro)다.
-  - 제출(3월)까지는 R3~R5 24/7 운영으로 약 3개월에 110~130 USD다(추정).
+  - 2027-01부터는 24/7 기준 월 약 21 USD(t4g.small + EBS + IPv4, RDS 없음)다.
+  - 제출(3월)까지는 R3~R5 24/7 운영으로 약 3개월에 약 65 USD다(추정).
 - **출시 후 기본값**
   - 심사와 출시 뒤 4주는 24/7이다.
   - 그 뒤 **G-C1(16:30~01:30, 월 약 20 USD)**으로 바꾼다.
@@ -849,7 +854,7 @@ StarIndex (최소 iOS 26.1, ADR-011)
 | 단계 | 기간 | 가용 평일 | 계획 인일 |
 |---|---|---|---|
 | M0 | 9/30–10/19 | 11(동결 전) + 주말 버퍼 | 확정 10.0 + 조건부 3.0 |
-| 정리·회고 | 10/20–10/23 | 4 | 계획 밖 버퍼(RDS 스냅샷 뒤 삭제, 문서) |
+| 정리·회고 | 10/20–10/23 | 4 | 계획 밖 버퍼(RDS 최종 스냅샷 뒤 삭제, DB-PLAN C2~C8, 문서) |
 | R0 | 10/26–10/30 | 5 | 5 |
 | R1 | 11/2–12/14 | 31 | 30.5 |
 | R2 | 12/15–12/24 | 8 | 8(Go) / 7.5(①) / 0(③) |

@@ -1,9 +1,9 @@
 # DB-PLAN: EC2에 PostgreSQL 18 직접 설치, 예보 2일 보관, 서비스에 필요한 데이터만 저장
 
-> **실행 기록 (2026-09-30):** 사용자가 "작업을 구체화하고 완수하라"고 지시해, 8장 일정(M0 이후 수행)을 앞당겨 **C1~C8의 코드와 배포 산출물을 지금 수행**한다.
+> **실행 기록 (2026-09-30 시작, 10-01 완료):** 사용자가 "작업을 구체화하고 완수하라"고 지시해, 8장 일정(M0 이후 수행)을 앞당겨 **C1~C8의 코드와 배포 산출물을 수행했다.** 결과, 검증, 계획과 달라진 점은 **10장**에 있다.
 > - C9(관측소 스냅숏)는 관측소를 고른 뒤 R1 첫 주에 하고, 기한은 11/28이다.
 > - EC2에 실제로 설치하는 일과 RDS→EC2 전환은 AWS 작업(W3) 때 한다.
-> - 대신 설치 스크립트는 Amazon Linux 2023 컨테이너에서, 메모리 예산은 arm64 컨테이너 모사로 미리 검증한다.
+> - 대신 설치 스크립트는 Amazon Linux 2023 컨테이너에서(`scripts/deploy-check.sh`, 47/47), 메모리 예산은 arm64 컨테이너 모사로(`scripts/ec2sim.sh`, 647/1,600MiB) 미리 검증했다.
 
 작성일은 2026-09-30입니다. 대상 저장소는 `/Users/ryujemu/Desktop/Knowledge Graph/5주차/personal_project`입니다. 이 문서는 `docs/DB-PLAN.md`로 저장되고, 구현할 때 기준으로 씁니다. 검토 의견 20건을 어떻게 처리했는지는 부록 A에 정리했습니다.
 
@@ -403,16 +403,14 @@ CREATE ROLE starindex LOGIN;                 -- 비밀번호는 아래처럼 std
 GRANT starindex TO CURRENT_USER;             -- RDS 마스터는 슈퍼유저가 아니므로 필요, EC2 postgres에서는 무해
 CREATE DATABASE starindex OWNER starindex TEMPLATE template0 ENCODING 'UTF8' LOCALE 'C';
 ```
-- 근거: "To create a database owned by another role, you must be able to SET ROLE to that role."입니다 [확실, postgresql.org/docs/18/sql-createdatabase.html]. CREATEROLE 사용자가 새 역할에 SET 권한을 자동으로 받지 않는다는 점(`createrole_self_grant` 기본값이 빈 문자열)은 [가능성 높음]입니다.
+- 근거: "To create a database owned by another role, you must be able to SET ROLE to that role."입니다 [확실, postgresql.org/docs/18/sql-createdatabase.html]. CREATEROLE 사용자가 새 역할에 SET 권한을 자동으로 받지 않는다는 점(`createrole_self_grant` 기본값이 빈 문자열)은 [확실, PG 18.6에서 재현]입니다.
+- **실행 결과(10-01):** 위 SQL 그대로는 RDS형 마스터(슈퍼유저 아님, CREATEROLE CREATEDB)에서 `must be able to SET ROLE "starindex"`로 실패했습니다. 역할을 만든 계정은 멤버(ADMIN)이지만 SET 권한이 없기 때문입니다. 실제 파일 `deploy/postgres/create-db.sql`은 `pg_has_role(current_user, 'starindex', 'SET')`이 거짓일 때만 `GRANT starindex TO CURRENT_USER WITH SET TRUE`를 실행하고, 역할·DB 생성도 `\gexec`로 멱등하게 합니다.
 - 비밀번호는 명령행 인자로 넘기지 않고 `printf "ALTER ROLE starindex PASSWORD '%s';" "$PW" | psql -v ON_ERROR_STOP=1`처럼 stdin으로 넘깁니다.
 
-**OOM 대비** (`deploy/systemd/postgresql.service.d/oom.conf`)
-```ini
-OOMScoreAdjust=-900
-Environment=PG_OOM_ADJUST_FILE=/proc/self/oom_score_adj
-Environment=PG_OOM_ADJUST_VALUE=0
-```
-- 메모리가 부족하면 postmaster 대신 java가 먼저 종료됩니다. java는 `Restart=on-failure`로 다시 뜹니다 [가능성 높음].
+**OOM 대비**
+- 계획: drop-in(`OOMScoreAdjust=-900`, `PG_OOM_ADJUST_FILE`, `PG_OOM_ADJUST_VALUE=0`).
+- **실행 결과(10-01): drop-in을 두지 않습니다.** AL2023의 `postgresql.service`에 이미 `OOMScoreAdjust=-1000`과 같은 `PG_OOM_ADJUST_*`가 들어 있습니다 [확실, 컨테이너에서 단위 파일 확인]. -900 drop-in은 보호를 오히려 약하게 만듭니다.
+- 메모리가 부족하면 postmaster 대신 java가 먼저 종료되고, `Restart=on-failure`로 다시 뜹니다 [가능성 높음].
 
 ### 5.3 메모리 예산 (t4g.small, MemTotal 약 1,900MiB [가능성 높음])
 
@@ -467,7 +465,7 @@ Environment=PG_OOM_ADJUST_VALUE=0
     pg_dump -Fc -h 127.0.0.1 -U starindex starindex > /var/tmp/starindex.dump
   aws s3 cp /var/tmp/starindex.dump s3://starindex-{acct}/backup/db/starindex-$(date -u +%F).dump
   ```
-- `deploy/aws/s3-lifecycle-backup.json`: `backup/db/`를 7일 뒤 만료시킵니다.
+- `deploy/aws/s3-lifecycle.json`: `backup/db/`는 7일, `deploy/backend/`는 90일 뒤 만료시킵니다. `put-bucket-lifecycle-configuration`은 버킷 설정 전체를 바꾸므로 두 규칙을 한 파일에 둡니다.
 - 버킷 정책은 CloudFront에 `packs/*`와 `legal/*`만 열어 두므로 백업은 공개되지 않습니다.
 
 ### 5.6 복구 (`deploy/postgres/restore.sh <날짜|latest> [대상DB]`)
@@ -503,8 +501,20 @@ Environment=PG_OOM_ADJUST_VALUE=0
 
 ### 5.8 산출물 파일
 
+실행 결과(10-01) 기준의 실제 파일입니다. 계획과 다른 점은 10장에 있습니다.
+
 | 파일 | 내용 |
 |---|---|
+| `deploy/postgres/install.sh` | 멱등 스크립트. app.env 확인 → 패키지 → 앱 사용자·디렉터리(app.env `root:starindex 0640`) → `daemon-reload` → initdb(locale C, UTF8) → pg_hba 교체 → `enable --now` → `tune.sql` → 재시작 → `create-db.sql` → SSM 비밀번호(stdin) → 운영 스크립트·유닛 설치 → 백업 타이머(S3_BUCKET이 있을 때) → 스왑 2GiB·swappiness 10 → 확인 출력. SQL 파일은 root가 열어 stdin으로 넘깁니다(체크아웃이 0700 홈에 있어도 동작). |
+| `deploy/postgres/{create-db.sql,lib.sh}` | 역할·DB 생성(5.2, EC2·RDS 공통). `DB_URL`에서 `PG*` 도출, SSM 읽기, `as_postgres`(관리 명령은 앱의 `PG*`를 물려받지 않음) |
+| `deploy/postgres/{pg_hba.conf,tune.sql,backup.sh,restore.sh,pin.sh}` | 5.2~5.6. `restore.sh`는 아카이브를 먼저 검증하고, 기존 DB를 `<db>_prev`로 남겨 두었다가 실패하면 되돌리고 앱을 다시 켭니다. 대상은 운영 DB와 `starindex_restoretest`만 허용합니다. |
+| `deploy/systemd/starindex.service` | `Wants`(Requires 아님: DB가 RDS일 때도 시작)·`After=postgresql.service valkey.service network-online.target`, `EnvironmentFile=/etc/starindex/app.env`, `ExecStart=/opt/starindex/start.sh`, `Restart=on-failure`, `RestartSec=10`, `StateDirectory`·`LogsDirectory` |
+| `deploy/systemd/starindex-pgdump.{service,timer}` | 5.5. 19:40 UTC(04:40 KST), `Persistent=true`, `User=starindex` |
+| `deploy/app/{start.sh,app.env.example}` | 5.4, 4.4. 데이터 키가 SSM에 아직 없으면 경고만 하고 키 없이 시작 |
+| `deploy/aws/{s3-lifecycle.json,iam-instance-db.json}` | 5.4, 5.5. 인스턴스 역할에는 CodeDeploy용 `deploy/backend/*` 읽기도 포함 |
+| `deploy/test/{Dockerfile,al2023-harness.sh}`, `scripts/deploy-check.sh` | AL2023 컨테이너 검증(10장). `systemctl`·`aws`만 대역으로 바꾸고 실제 스크립트를 실행 |
+
+---|---|
 | `deploy/postgres/install.sh` | 멱등 스크립트. 패키지 설치 → initdb → pg_hba 교체 → `tune.sql` → 역할과 DB 생성(SSM 비밀번호) → `enable --now` → 재시작 |
 | `deploy/postgres/{pg_hba.conf,tune.sql,backup.sh,restore.sh,pin.sh}` | 5.2~5.6 |
 | `deploy/systemd/starindex.service` | `Requires=postgresql.service`, `After=postgresql.service valkey.service network-online.target`, `EnvironmentFile=/etc/starindex/app.env`, `ExecStart=/opt/starindex/start.sh`, `Restart=on-failure`, `RestartSec=10` |
@@ -527,7 +537,7 @@ Environment=PG_OOM_ADJUST_VALUE=0
 | `KmaForecastClient.hours` 단위 테스트 | 6개 항목만 남고, 모두 null인 시각은 행을 만들지 않고, 반올림과 스케일 규칙을 지킵니다. |
 | `MigrationTest` | ① 슈퍼유저가 아닌 역할(NOSUPERUSER NOCREATEDB)이 소유한 DB에서 V1~최신 적용이 성공합니다. ② 같은 방식으로 `target=4`까지 올리고, 옛 `kma_forecast`에 발표 2개(최신이 -999)를 넣은 뒤 최신까지 올리면 이전 값이 대신 옮겨집니다. |
 | `SchemaGuardTest` | 앱 테이블마다 `information_schema.columns`가 2.2의 "남기는 컬럼"과 정확히 같고, 삭제한 테이블 4개는 없습니다. |
-| `RetentionServiceTest`(`purge(asOf)`에 고정 시각 사용) | 테이블마다 기준 ±1초 또는 ±1일의 행을 넣어 확인합니다. 월 경계(KST 11/01 00:30 → 밤 날짜 10/31, 9월 1일 행은 삭제되고 10월 행은 유지)와 밤 날짜 경계(KST 11:59와 12:00)를 포함합니다. |
+| `RetentionServiceTest`(`purge(asOf)`에 고정 시각 사용) | 테이블마다 기준 ±1초 또는 ±1일의 행을 넣어 확인합니다. 월 경계(KST 11/01 00:30 → 밤 날짜 10/31 → 기준 달은 10월, 지난달 1일인 9/1 행은 유지되고 8/31 행은 삭제. 2.2 표 기준이며, 처음 적은 "9월 1일 삭제"는 2.2와 모순이라 고쳤습니다. 테스트는 같은 경우를 03-01 00:30으로 확인합니다)와 밤 날짜 경계(KST 11:59와 12:00)를 포함합니다. |
 | 팩 보존 | kind `index` 6개와 `events` 2개, 그중 하나는 pinned, manifest는 두 kind를 모두 가리킵니다. 9일 전 행 가운데 현재·최신 3·pinned는 행과 파일이 남고 나머지는 지워집니다. 고아 파일은 `lastModified` 기준으로 지워지고, 방금 만든 과거 밤 파일은 남습니다. `store.delete`가 예외를 내면 행이 남고, 단계는 `COMPLETED_WITH_WARNINGS`, Job은 COMPLETED이며 이후 단계(kasiRiseSet, crosscheck)도 실행됩니다. |
 | Batch 정리 | `healthcheckJob`을 3번 실행하고 그중 2번의 `CREATE_TIME`을 9일 전으로 바꿉니다. 정리 후 그 2번의 실행, 단계, 컨텍스트, 파라미터, 인스턴스가 0이고, 나머지 1번과 실행 중인 `astroDailyJob`은 남습니다. |
 | `LocalPackStoreTest` | `../` 경로를 거부하고, 빈 디렉터리를 지우고, `list`가 상대 경로와 수정 시각을 돌려줍니다. |
@@ -554,9 +564,10 @@ Environment=PG_OOM_ADJUST_VALUE=0
 - JVM: `docker run --platform linux/arm64 --cpus=2 --memory=1g -e MALLOC_ARENA_MAX=2 -e JAVA_OPTS="<4.4와 같음> -XX:NativeMemoryTracking=summary" --network <compose 네트워크> eclipse-temurin:21-jre java -jar …`
 - `etl.sh`가 compose를 부를 때 `STARINDEX_EC2SIM=1`이면 override 파일을 함께 넘깁니다.
 - 실행할 것
-  - 서버 모드로 10분 대기(기준 RSS)
-  - CLI `pipeline` 3회, 이어서 `publish`, `astro`, `events`
+  - 서버 모드로 10분 대기(기준 RSS). **실행 결과에서 바꾼 점:** 운영과 같은 구성(웹 + 스케줄러 켬)으로 띄우고, 시작할 때 `forecastPipelineJob`을 같은 JVM 안에서 1회 실행합니다. 대기 뒤 서버가 살아 있는지 확인합니다.
+  - CLI `pipeline` 3회, 이어서 `publish`, `astro`, `events`(한 번에 JVM 하나)
   - `pg_dump` 1회
+  - data.go.kr 대신 `scripts/ec2sim_stub.py`가 응답하므로 키가 없어도 됩니다. DB는 같은 서버의 `starindex_ec2sim`을 쓰고 끝나면 지웁니다.
 
 **합격 기준**
 - 세 컨테이너 모두 `OOMKilled=false`
@@ -564,6 +575,22 @@ Environment=PG_OOM_ADJUST_VALUE=0
 - `jcmd VM.native_memory summary`의 Metaspace committed를 기록합니다.
 - starindex 연결 ≤6
 - 합계 + OS·에이전트 270 ≤ 1,600MiB
+- 측정값이 비면(컨테이너가 일찍 죽는 등) 실패로 봅니다. 연결 수 기준도 결과에 반영합니다.
+
+**실측 (2026-10-01, `scripts/ec2sim.sh 600`, PASS)**
+
+| 항목 | 값 | 기준 |
+|---|---|---|
+| postgres 최대 | 54MiB | ≤250 |
+| valkey 최대 | 13MiB | ≤150 |
+| 서버 JVM 최대(웹 + 스케줄러 + 같은 JVM 안 파이프라인) | 310MiB | ≤900 |
+| CLI JVM 최대(pipeline ×3, publish, astro, events) | 274MiB | ≤900 |
+| 합계 + OS·에이전트 270 | 647MiB | ≤1,600 |
+| starindex 연결 최대 | 4 | ≤6 |
+| Metaspace committed(NMT) | 서버 107MiB, CLI 89~98MiB | 상한 192m, 조정 기준 160 |
+| OOMKilled, 종료 코드 | 없음, 모두 0 | |
+
+- 힙 512m 가운데 실제 사용은 작아서 RSS가 예산(820~900MiB)보다 훨씬 낮습니다. EC2 첫 주(6.3)에 GC 로그로 Full GC 뒤 힙을 다시 봅니다.
 
 ### 6.3 운영 측정 (EC2 첫 주)
 
@@ -675,6 +702,59 @@ M0 동결 전 평일 여유는 약 2일입니다(SERVICE-PLAN 7.1). 그래서 **
 - 서울 리전의 gp3, 스냅샷, RDS 단가(제3자 자료)
 
 **추정:** 2장의 행 수와 용량, 5.3 메모리 예산, 덤프 크기, DB 전체 10~15MB, 인일. 6.2와 6.3의 실측값으로 바꿉니다.
+
+---
+
+## 10. 실행 결과와 계획 대비 변경 (2026-10-01)
+
+### 10.1 커밋
+
+| # | 커밋 | 내용 |
+|---|---|---|
+| C1·C2 | b731684 | DB-PLAN, ADR-014, 팩 골든 테스트 |
+| C3 | 6f28f2b | V5 `kma_forecast_hour` |
+| C4 | 1263924 | V6 읽지 않는 테이블·컬럼 삭제 |
+| C5 | f1f5ee0 | 보존 정리(`RetentionService`), pin |
+| C6 | 0d99429 | Hikari, JVM 옵션, EC2 메모리 모사 |
+| C7 | db5aeb4 | `deploy/` |
+| C8 | (이 커밋) | 문서, CI, 적대적 리뷰 반영 |
+| C9 | 미착수 | R1 첫 주, 기한 11/28 |
+
+### 10.2 검증 결과
+
+| 검증 | 결과 |
+|---|---|
+| `./gradlew test` | 57/57 통과. 팩 골든 해시(`e039f859…`)는 C3~C8 동안 바뀌지 않음 |
+| `scripts/deploy-check.sh` (amazonlinux:2023 2023.12.20260918, postgresql18-server 18.6, Corretto 21.0.12, Valkey 9.0.6) | 47/47 통과. 설치 2회(두 번째는 0700 홈의 체크아웃에서), Flyway V1~V6을 슈퍼유저가 아닌 소유자로 적용, SCRAM 저장·argv 비노출, 백업 → 복원 리허설 → 같은 밤 재발행 시 같은 팩 버전, 운영 DB 복원 시 앱 정지·재시작, 잘못된 아카이브 거부, 복원 중 실패 시 이전 DB 복귀, RDS형 비슈퍼유저 마스터에서 `create-db.sql`과 전환 복원 |
+| `scripts/ec2sim.sh 600` | PASS(10-01, 대기 600초). 최대: postgres 54MiB, valkey 13MiB, 서버 JVM(웹 + 스케줄러 + 파이프라인) 310MiB, CLI JVM 274MiB, 합계(+OS·에이전트 270) 647/1,600MiB. 연결 최대 4. Metaspace committed 87~107MiB(상한 192m). OOMKilled 없음, 작업 7개 모두 성공. postgres 값이 작은 것은 DB가 수십 KB라 `shared_buffers`를 거의 쓰지 않았기 때문이며, 실제 값은 6.3에서 다시 잽니다. |
+| shellcheck(`--severity=warning`) | 경고 0 |
+| 적대적 리뷰(5관점 × 반박 검증) | 16건 보고, 반박 2건, 나머지 14건 모두 반영(10.3) |
+
+### 10.3 계획과 달라진 점
+
+| 위치 | 계획 | 실제 | 이유 |
+|---|---|---|---|
+| 4.3(b) 팩 삭제 | 파일 삭제 → 행 삭제 | 한 트랜잭션 안에서 `SELECT … FOR UPDATE`로 pinned 재확인 → 행 삭제 → 파일 삭제. 파일 삭제가 실패하면 행이 되살아남 | 삭제 도중 pin이 들어오는 경쟁을 막음 |
+| 4.3(c) 고아 파일 | `packs/` 전체 목록 | `packs/{index,events,spots}/`만 목록. 행이나 manifest가 가리키는 **버전 디렉터리** 전체를 보호. 목록 중 사라진 파일은 건너뜀 | manifest 임시 파일과 발행 중 파일 때문에 정리 전체가 실패하던 문제(리뷰 RET-1) |
+| 4.3 manifest | — | manifest를 읽지 못하면 팩 삭제를 건너뛰고 경고 | 현재 팩을 모르면 무엇도 안전하지 않음 |
+| 4.4 Hikari | `idle-timeout: 10m` | `600000` | Boot 4는 이 속성에 기간 표기를 받지 않아 시작이 실패(모사에서 발견) |
+| 4.4 테스트 디렉터리 | — | 테스트 팩 디렉터리를 `build/test-packs`로 분리 | 보존 정리가 개발자의 `build/packs`를 지울 수 있었음 |
+| 5.2 OOM | drop-in -900 | 두지 않음 | AL2023 단위 파일이 이미 -1000 |
+| 5.2 create-db | `GRANT starindex TO CURRENT_USER` | `pg_has_role(…,'SET')` 검사 + `WITH SET TRUE` | PG16+ 생성자에게 SET 권한이 없음(RDS형 마스터에서 재현) |
+| 5.1 설치 | — | initdb 전에 `daemon-reload` | `postgresql-setup`이 NeedDaemonReload를 검사 |
+| 5.5 수명주기 | `s3-lifecycle-backup.json` | `s3-lifecycle.json`(backup/db 7일 + deploy/backend 90일) | 버킷 수명주기 설정은 통째로 교체됨 |
+| 5.4 IAM | DB 관련 권한만 | `deploy/backend/*` 읽기 포함 | 이 파일이 인스턴스 역할 전체로 쓰이면 CodeDeploy가 리비전을 못 받음(리뷰 IAM-1) |
+| 5.6 복구 | 중지 → dropdb → 생성 → 복원 | 아카이브 검증 → 중지 → 기존 DB를 `<db>_prev`로 이름 변경 → 생성 → 복원 → 확인. 실패하면 되돌리고 앱 재시작. 대상은 운영 DB와 `starindex_restoretest`만 | 잘못된 파일 하나로 운영 DB가 비고 앱이 멈춘 채 남던 문제(리뷰) |
+| 5.8 유닛 | `Requires=postgresql.service` | `Wants` | DB가 RDS일 때 로컬 서버가 없어도 앱이 떠야 함 |
+| 6.2 모사 | 서버 대기 + CLI | 서버는 운영 구성(웹 + 스케줄러 + 같은 JVM 안 파이프라인 1회)으로. 측정 누락·서버 조기 종료·연결 수도 실패로 판정 | 리뷰 SIM-1~3. 이를 위해 웹 서버로 띄운 잡 실행은 종료하지 않도록 `StarIndexApplication`을 바꿈(CLI는 그대로 종료 코드 반환) |
+| 6.1 월 경계 | "9월 1일 삭제" | 9/1 유지, 8/31 삭제 | 2.2 표(밤 날짜가 속한 달의 지난달 1일부터)와 모순이던 문장 |
+
+### 10.4 남은 것
+
+- C9(관측소 스냅숏): R1 첫 주, 기한 11/28.
+- 실제 EC2 설치와 RDS → EC2 전환(W3 이후, 8장 "EC2 적용 순서"), 6.3 운영 측정.
+- Valkey: EC2(AL2023)는 9.0.6, 로컬·CI는 8입니다. 프로토콜은 호환되지만 CI 이미지를 9로 맞출지는 정하지 않았습니다.
+- 개발 PC: Desktop 폴더 동기화가 `build/` 안에 `이름 2.class` 사본을 만들어 Gradle 테스트가 "wrong name"으로 실패한 적이 있습니다(사본을 지우면 해결). 저장소를 동기화 밖으로 옮기거나 `build`를 동기화에서 빼는 것을 권합니다.
 
 ---
 

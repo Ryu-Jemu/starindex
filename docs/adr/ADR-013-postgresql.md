@@ -30,5 +30,6 @@
 
 - PLAN rev4의 비용 표(3.6)는 엔진 이름만 바뀌고 금액은 그대로다.
 - W3 인프라 작업은 RDS for PostgreSQL 18로 만든다(파라미터 그룹 `postgres18`).
+- 이후 ADR-014(2026-09-30)로 운영 DB는 앱 EC2에 직접 설치한 PostgreSQL 18이 되었다. RDS는 M0 시연 기간에만 쓸 수 있고, 엔진·버전(18)과 RDS 호환 조건은 그대로다.
 - QueryDSL, JPA(Hibernate 7), Spring Batch는 그대로 쓴다. BackendSmokeTest가 PostgreSQL 18에서 통과한다.
 - 되돌리려면 V1~V3의 PostgreSQL 전용 문법(TIMESTAMPTZ, JSONB, DISTINCT ON, ON CONFLICT)을 MySQL용으로 다시 써야 한다.

@@ -1,6 +1,10 @@
 # ETL 운영 안내
 
-인증키를 넣으면 바로 돌아가도록 만든 ETL의 사용법이다. DB는 PostgreSQL 18(ADR-013), 캐시와 호출 한도는 Valkey 8, 배치는 Spring Batch 6이다.
+인증키를 넣으면 바로 돌아가도록 만든 ETL의 사용법이다.
+- DB: PostgreSQL 18. 운영에서는 앱 EC2에 직접 설치한다(ADR-013, ADR-014, 세부는 `docs/DB-PLAN.md`).
+- 캐시와 호출 한도: Valkey(로컬 8, EC2 AL2023 패키지 9)
+- 배치: Spring Batch 6
+- 보관: 서비스에 필요한 것만, 기본 2일(7절)
 
 ## 1. 인증키를 넣고 확인하기 (1분)
 
@@ -21,8 +25,9 @@
 
 ```
 scripts/etl.sh pipeline        # 최신 단기예보 발표 → 17개 지점 저장 → 오늘 밤 지수 → 팩 + manifest
-scripts/etl.sh astro           # 오늘부터 4일: Astronomy Engine 박명 + 천문연 출몰시각 + 교차검증
+scripts/etl.sh astro           # 보존 정리 + 오늘부터 4일 천문연 출몰시각 + Astronomy Engine 교차검증
 scripts/etl.sh events          # 이번 달과 다음 달 천문현상 (+ 특일·음양력, 승인된 경우)
+scripts/etl.sh pin <version>   # 이 팩 버전은 보존 정리에서 지우지 않는다(데모·롤백용). 해제는 unpin
 ```
 
 - 결과 팩: `backend/build/packs/packs/index/<version>/index.json.gz`
@@ -34,7 +39,7 @@ scripts/etl.sh events          # 이번 달과 다음 달 천문현상 (+ 특일
 | 명령 | 파라미터 | 예 |
 |---|---|---|
 | `forecast`, `pipeline` | `base=yyyyMMddHHmm` (발표 시각. 없으면 지금 받을 수 있는 최신 발표) | `base=202610121700` |
-| `publish`, `pipeline` | `nightDate=yyyy-MM-dd` (없으면 12시 기준 오늘 밤). 이미 더 최신 밤이나 발표가 발행돼 있으면 팩만 저장하고 manifest는 그대로 둔다(과거 밤 재계산이 앱을 되돌리지 않음). | `nightDate=2026-10-12` |
+| `publish`, `pipeline` | `nightDate=yyyy-MM-dd` (없으면 12시 기준 오늘 밤). 이미 더 최신 밤이나 발표가 발행돼 있으면 팩만 저장하고 manifest는 그대로 둔다(과거 밤 재계산이 앱을 되돌리지 않음). 예보는 2일만 보관하므로 이틀보다 이전 밤은 다시 만들 수 없다. | `nightDate=2026-10-12` |
 | `astro` | `from=yyyy-MM-dd` | `from=2026-10-12` |
 | `events` | `month=yyyy-MM` (없으면 이번 달과 다음 달) | `month=2026-10` |
 
@@ -42,10 +47,10 @@ scripts/etl.sh events          # 이번 달과 다음 달 천문현상 (+ 특일
 
 | Job | 단계 | 키가 없을 때 |
 |---|---|---|
-| `forecastIngestJob` | 키 확인 → 격자 17개 수집(격자마다 트랜잭션, 1000행씩 페이지 넘김) → 완결성 90% 검사 | 안내 메시지와 함께 중단 |
+| `forecastIngestJob` | 키 확인 → 격자 17개 수집(격자마다 트랜잭션, 1000행씩 페이지 넘김) → 6개 항목만 시간대별 1행으로 병합 → 완결성 90% 검사 | 안내 메시지와 함께 중단 |
 | `starIndexPublishJob` | 지수 계산(천문박명 시간대 × 구름·강수·달) → 저장 → 팩(gzip, 압축본 sha256) → manifest → Redis 알림 | 예보가 없으면 중단 |
 | `forecastPipelineJob` | 위 두 Job을 이어서 실행(스케줄러용) | 중단 |
-| `astroDailyJob` | 보존 기간 정리(예보 14일, 호출 기록 90일) → Astronomy Engine 계산 → 키 판정 → 천문연 출몰시각 → 교차검증 | 정리와 계산만 하고 COMPLETED |
+| `astroDailyJob` | 보존 정리(7절) → 키 판정 → 천문연 출몰시각 → 교차검증(Astronomy Engine은 그때그때 계산) | 보존 정리만 하고 COMPLETED |
 | `astroEventsJob` | 키 확인 → 천문현상 → 특일(선택) → 음양력(선택) | 중단 |
 | `apiKeyCheckJob` | 키 확인 → API별 1회 호출 보고 | 중단 |
 
@@ -57,6 +62,9 @@ scripts/etl.sh events          # 이번 달과 다음 달 천문현상 (+ 특일
 | 요청 형식 오류(10·11·12) | 즉시 중단. 코드나 API 사양 문제라 모든 호출에서 반복된다. |
 | 초당 한도(23), 통신·제공기관 오류 | 2회 재시도(1초, 3초). 그래도 실패하면 기록하고 다음 격자로 넘어간다. 완결성이 90% 미만이면 Job 실패. |
 | 자료 없음(03) | 오류가 아니다. 발표 직후나 아직 공개되지 않은 날짜다. |
+| 보존 정리 일부 실패 | 경고만 남긴다. 단계 종료 코드는 `COMPLETED_WITH_WARNINGS`, Job은 COMPLETED이고 다음 단계도 실행한다. 실패한 항목은 다음 날 다시 시도한다. |
+
+완결성: `forecastFetch` 단계의 `WRITE_COUNT`(저장한 격자)와 `FILTER_COUNT`(실패한 격자)로 남긴다. 관리자 화면의 완결성 = WRITE / (WRITE + FILTER).
 
 ## 4. 스케줄 (운영)
 
@@ -70,14 +78,18 @@ scripts/etl.sh events          # 이번 달과 다음 달 천문현상 (+ 특일
 
 ## 5. 데이터와 출처
 
+서비스가 읽는 것만 저장한다(ADR-014). 컬럼 목록은 `SchemaGuardTest`가 지킨다.
+
 | 테이블 | 내용 |
 |---|---|
 | `region` | 기상청 격자 시트(2026-07-01) 1단계 16개 시·도 + 광주 서구(추가 지점) |
-| `kma_forecast`, `kma_forecast_issue` | 단기예보 원값과 수치. 결측(±900 이상)과 연장 구간 코드값을 구분한다. |
-| `kasi_riseset`, `astro_night`, `astro_crosscheck` | 천문연 시각, Astronomy Engine 시각, 두 값의 차(초) |
+| `kma_forecast_hour` | (격자, 예보 시각)마다 1행. SKY, PTY, TMP, REH, WSD, POP 6개 항목의 가장 최근 발표 값. 새 발표에 결측(±900 이상)이 있으면 이전 값을 유지하고, 연장 구간 풍속 코드값은 저장하지 않는다. |
+| `kasi_riseset` | 천문연 저녁 시각 4개(일몰, 시민·항해·천문박명 종료). 팩에 "(천문연)"으로 표시한다. |
+| `astro_crosscheck` | 천문연 시각과 Astronomy Engine 시각의 차(초) |
 | `kasi_astro_event`, `kasi_special_day`, `kasi_lunar_day` | 월 단위 천문 달력 |
-| `star_index_hourly`, `star_index_nightly` | 시간별 계수와 점수, 밤 점수·최적 2시간·기여도(JSONB) |
-| `data_pack`, `etl_api_call` | 발행 이력과 외부 호출 감사. 키와 사용자 좌표는 기록하지 않는다. |
+| `star_index_nightly` | 밤 점수와 등급(R3 공개 순위용). 시간별 값과 기여도는 팩에만 있다. |
+| `data_pack` | 발행 이력. `pinned`이면 보존 정리에서 지우지 않는다. |
+| `etl_api_call` | 외부 호출 감사. 오류 문구는 실패한 호출만 80자까지. 키와 사용자 좌표는 기록하지 않는다. |
 
 출처 표시(공공누리 제1유형): 팩의 `attribution`에 "기상청 단기예보 조회서비스(출처: 기상청)", 한국천문연구원, Astronomy Engine(MIT)을 넣는다.
 
@@ -90,3 +102,18 @@ scripts/etl.sh events          # 이번 달과 다음 달 천문현상 (+ 특일
   - 천문연 실제 응답의 시각 형식(`HHmm` 뒤 공백으로 예상)
   - 월출이 없는 날의 표기
   - 단기예보 과거 발표를 얼마나 거슬러 받을 수 있는지
+
+## 7. 보존 정책
+
+매일 `astroDailyJob`의 첫 단계에서 정리한다. 기준 시각 하나(asOf)에서 모든 기준을 계산하고, 밤 날짜는 KST 12시에 바뀐다. 세부와 근거는 `docs/DB-PLAN.md` 2절이다.
+
+| 대상 | 보관 |
+|---|---|
+| `kma_forecast_hour`, `kasi_riseset`, `star_index_nightly` | 2일(어젯밤 재발행에 필요한 최소) |
+| `etl_api_call`, `astro_crosscheck`, `BATCH_*` 메타데이터 | 8일(G6 "7일 연속" 판정 + 1일) |
+| `data_pack` 행과 팩 파일 | 8일. 단 manifest가 가리키는 현재 팩, 종류별 최신 3개, `pinned` 팩은 지우지 않는다. |
+| 천문 달력 3종 | 밤 날짜가 속한 달의 지난달 1일부터 |
+
+- 설정: `starindex.etl.forecast-retention-days`(기본 2, 최소 2), `audit-retention-days`(기본 8, 최소 8), `pack-keep-min`(기본 3). 최소보다 작으면 앱이 시작하지 않는다.
+- 팩 고정: 로컬 `scripts/etl.sh pin|unpin <version>`, EC2 `/opt/starindex/postgres/pin.sh <version> [--unpin]`.
+- 운영 백업: 매일 04:40 KST 전체 `pg_dump`를 S3 `backup/db/`에 올리고 7일 뒤 지운다(`deploy/postgres/backup.sh`). 복구는 `restore.sh`.

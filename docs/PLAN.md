@@ -1,6 +1,6 @@
 # 오늘 밤 별 지수: 스카이뷰 + 하늘색 변화 + Unity AR, 최소 비용 작업 계획 (rev4, 2026-09-29)
 
-> **2026-09-30 변경:** DB는 PostgreSQL 18로 바뀌었다(ADR-013, `docs/adr/ADR-013-postgresql.md`). 이 문서의 "RDS MySQL 8.4"는 "RDS for PostgreSQL 18"로 읽는다. 비용은 같다. ETL 사용법은 `docs/ETL.md`.
+> **2026-09-30·10-01 변경:** DB는 PostgreSQL 18이다(ADR-013). 앱 EC2(t4g.small)에 직접 설치한다(ADR-014). M0 시연 기간에만 RDS for PostgreSQL 18을 쓸 수 있고, 시연 뒤 최종 스냅샷을 만들고 삭제한다. 전환은 `DB_URL`만 바꾼다(`docs/DB-PLAN.md` 5.7). 보관은 기본 2일이고 예외는 `docs/DB-PLAN.md` 2장을 따른다. ETL 사용법은 `docs/ETL.md`.
 
 
 ## Context
@@ -12,7 +12,7 @@
   - ③ 발표 MVP 먼저, 1인
   - ④ **시간에 따라 노을·해질녘 하늘색이 변하며 진행**
   - ⑤ **이미 가진 것(Apple Developer, iOS 26 이상 iPhone, AWS 계정)을 빼고 추가 비용 최소**
-  - ⑥ 고정 스택: GitHub Actions → S3 → CodeDeploy → EC2(Spring Boot, Redis, JWT, WebSocket, QueryDSL), RDS MySQL, Bootstrap
+  - ⑥ 고정 스택: GitHub Actions → S3 → CodeDeploy → EC2(Spring Boot, Redis, JWT, WebSocket, QueryDSL), RDS MySQL, Bootstrap (과제 원문. DB는 PostgreSQL 18로 바꿨고 운영은 EC2 직접 설치, M0 시연만 RDS 가능: ADR-013, ADR-014)
 - **저장소**: 이 저장소(`personal_project/`)
 - **검증 이력**
   - 조사 2회(7트랙과 비평가)
@@ -70,7 +70,7 @@
 | D6 | R은 `Rotation_EQJ_HOR`에 `RotateVector`로 기저벡터를 돌려 열로 구성한다. 굴절은 **모든 고도**에 적용한다. C 호출은 단일 `AstroEngine` actor로 모은다 | HOR 축 = CoreMotion 축 [확실]. `Constellation`의 static 초기화가 스레드 안전하지 않다 [확실]. 굴절은 −1° 아래에서도 연속 감쇠한다(AE 소스) [확실] |
 | D7 | 카탈로그는 BSC5P, IAU-CSN, d3 lines, 한글 88개 표, Messier. HYG, Hipparcos·Gaia, Stellarium, Falchi는 뺀다 | NC·SA·GPL 조건 배제 [확실] |
 | D8 | 앱 데이터는 모두 **S3 정적 팩**(지수와 72시간 SKY/PTY, 카탈로그, 이벤트, R3 명소)을 CloudFront로 받는다 | EC2가 꺼져도 앱이 동작하고, 오프라인과 D4를 지킨다 |
-| D9 | **Spring Boot 4.1.x**(4.1.1, OSS 지원 2027-07-31까지), `spring-boot-starter-batch-jdbc`, `spring-boot-starter-flyway`+`flyway-mysql`, QueryDSL은 OpenFeign `io.github.openfeign.querydsl` 7.x를 권장한다(7.7은 9/23에 나온 릴리스라 W2에서 7.6과 함께 호환 확인). 폴백은 Boot가 관리하는 `com.querydsl` 5.1.0이고, 이 경우 ScrollableResults 계열 API를 쓰지 않는다. **정렬·필터 키는 화이트리스트 enum으로만 받는다**(CVE-2024-49203). 결정은 ADR-004에 남긴다 | Boot 4에서 Batch가 분리됐다 [확실]. 3.5는 OSS가 끝났고(2026-06-30), 4.0.x는 2026-12-31에 끝난다 [확실] |
+| D9 | **Spring Boot 4.1.x**(4.1.1, OSS 지원 2027-07-31까지), `spring-boot-starter-batch-jdbc`, `spring-boot-starter-flyway`+`flyway-database-postgresql`(ADR-013), QueryDSL은 OpenFeign `io.github.openfeign.querydsl` 7.x를 권장한다(7.7은 9/23에 나온 릴리스라 W2에서 7.6과 함께 호환 확인). 폴백은 Boot가 관리하는 `com.querydsl` 5.1.0이고, 이 경우 ScrollableResults 계열 API를 쓰지 않는다. **정렬·필터 키는 화이트리스트 enum으로만 받는다**(CVE-2024-49203). 결정은 ADR-004에 남긴다 | Boot 4에서 Batch가 분리됐다 [확실]. 3.5는 OSS가 끝났고(2026-06-30), 4.0.x는 2026-12-31에 끝난다 [확실] |
 | D10 | WS는 raw JSON + Redis Pub/Sub. 앱은 공개 `/ws/v1/live`를 수신만 하고 30~60초 ping과 재연결을 한다 | CloudFront WS 지원 [확실] |
 | D11 | 앱에는 사용자 로그인이 없다. JWT는 관리자에만 쓴다. **관리자 화면은 공개 경로에서 막고 SSM 포트 포워딩으로만 접속한다**(0원). 푸시는 G9 뒤 opt-in | CloudFront↔EC2 구간이 평문이라 관리자 자격증명이 노출될 수 있다 |
 | D12 | 공개 진입점은 **CloudFront 기본 도메인 하나**. 도메인, 인증서, nginx TLS를 쓰지 않는다 | 기본 도메인은 HTTPS가 되어 ATS를 충족한다. 상시 무료 월 1TB·1천만 요청 [확실] |
@@ -83,7 +83,7 @@
 ```
 ios/        StarIndex.xcworkspace, App/(Shaders/SkyColor.metal), Features/, Widget/, Packages/{SkyCore,SkySensors,StarIndexKit}, UnityExport/(gitignore)
 unity/StarAR/   Unity 6.3 LTS(Assets, Packages, ProjectSettings), scripts/export_ios.sh
-backend/    Gradle(Java 21, Boot 4.1.x), libs/astronomy-2.1.19.jar, tools/catalog-builder/, docker-compose.yml(MySQL 8.4, valkey 8), src/main/resources/{static/admin, db/migration}
+backend/    Gradle(Java 21, Boot 4.1.x), libs/astronomy-2.1.19.jar, tools/catalog-builder/, docker-compose.yml(PostgreSQL 18, valkey 8), src/main/resources/{static/admin, db/migration}
 legal/      privacy.html, support.html, licenses.html → S3 legal/
 contracts/  openapi.yaml, schemas/{manifest,index,spots,bridge-v1}.schema.json, fixtures/, golden/astro_vectors.json
 data/       catalog-src/, names_ko.csv, declination.csv, regions.csv, spots.csv, meteor_showers.csv(10개, AR 연출용), viirs/
@@ -159,7 +159,7 @@ docs/       adr/, ATTRIBUTION.md, review-notes.md, verification/, demo-script.md
 ### 3.4 백엔드 (단일 Gradle, 패키지 `etl.*`, `api`, `admin`, `ws`, `push`, `astro`)
 | Job | 스케줄(KST, 가정) | 내용 | 단계 |
 |---|---|---|---|
-| `forecastIngestJob` | 발표 +15분 | 격자(M0 17개 시·도 → R3 시군구·명소) → 수집(`quota:kma`, raw는 S3) → upsert | M0 |
+| `forecastIngestJob` | 발표 +15분 | 격자(M0 17개 시·도 → R3 시군구·명소) → 수집(`quota:kma`) → `kma_forecast_hour` upsert | M0 |
 | `astroDailyJob` | 00:30 | 천문연 출몰·박명 → AE 계산 → 교차검증 | M0 |
 | `starIndexPublishJob` | 체이닝 | 지수 → `qualityGateStep` → **지수 팩(어두운 창 지수 + 72시간 SKY/PTY)** 발행 → manifest 갱신 → WS 방송 → `PackAgeMinutes` 지표 | M0 |
 | `spotsPublishStep` | 위 Job의 Step | 명소 목록·순위·기여도 팩 `packs/spots/v…` | R3 |
@@ -167,7 +167,7 @@ docs/       adr/, ATTRIBUTION.md, review-notes.md, verification/, demo-script.md
 | `lightPollutionLoadJob` | 연 1회 | VIIRS 전처리 CSV(로컬 GDAL) → 광공해 등급(G12) | R3 |
 | `skyCatalogBuildJob` | 수동 | catalog-builder를 Step으로 감쌈 | R3 |
 | `pushDispatchJob` | 17:30, G9 통과 시 | 관심 지역 → APNs(ES256 JWT) | R4(조건부) |
-| **`collect-only` 프로필** | R1~R2 | **DB 없이** 17:00 발표 원본만 S3 `raw/kma/`에 저장(@Scheduled). 대상 격자는 **17개 시·도 + T13 대상 10곳(ASOS 관측소 인근 격자, `regions.csv`에 표시)**. 저장 뒤 `StarIndex/RawCollectedAgeMinutes`를 PutMetricData한다. RDS를 삭제한 동안 T13용 데이터를 쌓는다 | R1~R2 |
+| **적중률 스냅숏**(C9, `forecastIngestJob` 안) | R1 첫 주(11/2~11/6, 기한 11/28) | 17:00 발표와 전날 23:00 발표를 수집할 때 ASOS 관측소 격자 10곳의 21·22·23·00시 SKY/PTY를 `forecast_verification`에 바로 쓴다. ASOS 관측값은 R3 `forecastVerifyJob`이 채운다. `collect-only` 프로필과 S3 `raw/`는 폐기했다(ADR-014) | R1~ |
 
 - **지수 v1**(가정, T13·G12로 재보정)
   - 인자: `f_cloud`(SKY 1/3/4 → 1.0/0.5/0.15), `f_precip`(PTY>0이면 0), `f_moon = 1−0.7k√max(0,sin h_moon)`, `f_light`(VIIRS)
@@ -182,8 +182,8 @@ docs/       adr/, ATTRIBUTION.md, review-notes.md, verification/, demo-script.md
     - 기기(G9): `/api/v1/devices`
   - 관리자 **`/api/admin/**`**(`/api/v1` 밖, JWT)
     - 인증: `auth/login`, `ws-ticket`
-    - ETL 운영: `etl/runs`, **`etl/jobs/{name}/run`(비동기 `202 {executionId}`, 실행 중이면 `409`)**, `quality`, `crosscheck`, `backtest`
-    - 팩: `packs/rollback`
+    - ETL 운영: `etl/runs`, **`etl/jobs/{name}/run`(비동기 `202 {executionId}`, 실행 중이면 `409`)**, `quality`, `crosscheck`, `backtest`(`forecast_verification`의 binary-clear-v2 혼동행렬)
+    - 팩: `packs/rollback`. 대상은 종류별 최신 3개와 pinned 팩뿐이다(보존 정리가 지우지 않는 팩, ADR-014). 고정은 로컬 `scripts/etl.sh pin|unpin <version>`, EC2 `/opt/starindex/postgres/pin.sh`
   - 관리자 화면: `/admin/**`, 관리자 WS: `/ws/admin`
   - manifest의 **단일 원천은 S3 `packs/manifest/latest.json`**이다. REST에는 manifest 엔드포인트를 두지 않는다. `data_pack`은 발행 이력, Redis `pack:manifest`는 관리자 표시용 캐시다.
   - **롤백 순서**: S3 latest.json 교체 → `/packs/manifest/*` 무효화 → `data_pack` 갱신 → Redis `pack:manifest` 갱신
@@ -202,21 +202,23 @@ docs/       adr/, ATTRIBUTION.md, review-notes.md, verification/, demo-script.md
   - 수집·쿼터: `fcst:raw:*`(TTL 24h), `quota:{kma|kasi}:{date}`(70% 경고, 90% 정지)
   - 운영·인증: `lock:job:*`, `etl:progress:*`, `ws:ticket:*`(TTL 30s), `jwt:deny:*`, `auth:fail:{ip}`(5회 실패 시 15분 잠금)
   - 푸시: `push:sent:*`
-- **MySQL 8.4**(Flyway V1에 `BATCH_*` 포함)
-  - 지역: `region`, `observing_spot`
-  - 원천 데이터: `kma_forecast`, `kasi_riseset`(civilm/civile/nautm/naute/astm/aste 포함), `kasi_event`, `astro_computed`
-  - 지수: `star_index_hourly`, `spot_rank_daily`
-  - 검증: `crosscheck_result`, `index_backtest`
-  - 팩·명칭: `data_pack`, `constellation_name`
-  - 운영: `etl_quality_metric`, `admin_user`, `device*`
+- **PostgreSQL 18**(ADR-013/014, 실제 스키마와 보관은 `docs/DB-PLAN.md`. Flyway V1에 `BATCH_*` 포함)
+  - 지역: `region`
+  - 원천 데이터: `kma_forecast_hour`(격자·예보 시각마다 1행, SKY/PTY/TMP/REH/WSD/POP), `kasi_riseset`(저녁 시각만), `kasi_astro_event`, `kasi_special_day`, `kasi_lunar_day`
+  - 지수: `star_index_nightly`(score, grade)
+  - 검증: `astro_crosscheck`. R1에 `verify_station`, `forecast_verification` 추가(DB-PLAN 3.3)
+  - 팩: `data_pack`(+ `pinned`)
+  - 운영: `etl_api_call`, `BATCH_*`
+  - 보관: 기본 2일. `etl_api_call`·`astro_crosscheck`·`data_pack`·`BATCH_*`는 8일, 천문 달력은 지난달 1일부터, `forecast_verification`은 32일
+  - R3 이후 계획(미생성): `observing_spot`, `spot_rank_daily`, `constellation_name`, `etl_quality_metric`, `admin_user`, `device*`
 - **S3 버킷 1개** `starindex-{acct}`(Block Public Access 4개 모두 켬)
   - `packs/manifest/latest.json`: 업로드 시 `Cache-Control: max-age=60, must-revalidate`
   - `packs/{index,catalog,events,spots}/v…/*`: `Cache-Control: public, max-age=31536000, immutable`. `.json.gz`는 `Content-Type: application/gzip`(Content-Encoding 없음)이고 sha256은 **압축된 바이트**로 계산한다.
   - `legal/*.html`
-  - `raw/{kma|kasi}/…`: 수명주기 **120일**(T13 백필용)
+  - `backup/db/`: 매일 전체 `pg_dump`, 수명주기 **7일**(ADR-014)
   - `deploy/backend/{sha}.zip`: 수명주기 **90일**(롤백 리비전 보존)
   - 버킷 정책: Principal `cloudfront.amazonaws.com`, `AWS:SourceArn`=배포 ARN, Resource는 `packs/*`와 `legal/*`**만** 허용
-  - EC2 인스턴스 역할: `deploy/backend/*` 읽기, `packs/*`·`raw/*` 쓰기, **`raw/*` 읽기와 `s3:ListBucket`(Condition `s3:prefix=raw/`)**(R3 재적재용)
+  - EC2 인스턴스 역할(`deploy/aws/iam-instance-db.json`, ADR-014): `deploy/backend/*` 읽기, `backup/db/*`·`packs/*` Put/Get, `s3:DeleteObject`는 `packs/{index,events,spots}/*`만(manifest·legal·backup 제외), `s3:ListBucket`(Condition StringLike `s3:prefix`=`backup/db/*`, `packs/*`), `ssm:GetParameter(s)` `/starindex/*`, ssm 경유 `kms:Decrypt`. `raw/*` 권한은 없다
 - **`skypack.bin`**
   - 헤더: `SKYP`, u16, u32
   - 레코드: f32×3, i16(등급×100), u8(B−V), u16(HR), i32(이름 인덱스)
@@ -233,34 +235,34 @@ docs/       adr/, ATTRIBUTION.md, review-notes.md, verification/, demo-script.md
 - **관리자 웹**(Bootstrap, Spring static): 로컬에서 `aws ssm start-session --document-name AWS-StartPortForwardingSession --parameters portNumber=8080,localPortNumber=18080`을 실행한 뒤 `http://localhost:18080/admin`으로 접속한다. 화면 구성은 실행 이력(QueryDSL), 진행률(WS), 품질, 쿼터, 교차검증·백테스트 차트, 팩 롤백, 명소 CRUD다.
 - **공개 페이지**: S3 `legal/*.html`(EC2가 꺼져도 열림, 0원)
 - **CI/CD**
-  - `backend.yml`(Linux): PR마다 `./gradlew test`(Testcontainers MySQL 8.4·valkey, WireMock). main 머지 시 zip을 S3 `deploy/`에 올리고 OIDC로 CodeDeploy를 실행하며, `validate.sh`로 확인한다.
+  - `backend.yml`(Linux): PR마다 `./gradlew test`(Testcontainers PostgreSQL 18(로케일 C)·valkey 8, WireMock, ADR-013). main 머지 시 zip을 S3 `deploy/`에 올리고 OIDC로 CodeDeploy를 실행하며, `validate.sh`로 확인한다.
   - iOS는 로컬 `swift test`와 pre-push 훅으로 돌린다(macOS 러너는 분을 약 10배로 소진하므로 쓰지 않는다).
 - **IAM과 에이전트**
   - CodeDeploy 에이전트는 SSM Distributor `AWSCodeDeployAgentV2`(AL2023 aarch64)로 설치한다.
-  - 인스턴스 프로파일: `AmazonSSMManagedInstanceCore`, S3(3.4에 적은 범위, raw 읽기·ListBucket 포함), `ssm:GetParameter(s)` `/starindex/*`, `cloudfront:CreateInvalidation`(해당 배포), `cloudwatch:PutMetricData`
+  - 인스턴스 프로파일: `AmazonSSMManagedInstanceCore`, S3(3.4에 적은 범위, `backup/db/*`·`packs/*` ListBucket 포함, raw 없음, ADR-014), `ssm:GetParameter(s)` `/starindex/*`(DB 비밀번호 SecureString `/starindex/db/password`, ssm 경유 `kms:Decrypt`), `cloudfront:CreateInvalidation`(해당 배포), `cloudwatch:PutMetricData`
   - CodeDeploy 서비스 역할: `AWSCodeDeployRole`
   - OIDC 역할 신뢰 조건: `aud=sts.amazonaws.com`, `sub=repo:<owner>/<repo>:ref:refs/heads/main`. 권한은 S3 `deploy/backend/*` PutObject와 codedeploy Create/Get/Register. `id-token: write`는 deploy 잡에만 준다.
 - **모니터링**(알람 3개, 무료 한도 안)
   1. 서울: EC2 StatusCheckFailed
-  2. 서울: 데이터 신선도. 단계마다 지표가 다르다.
-     - M0·R3 이후: `StarIndex/PackAgeMinutes`가 360분을 넘거나 데이터가 없을 때
-     - **R1~R2(collect-only)**: `StarIndex/RawCollectedAgeMinutes`가 1,500분을 넘거나 데이터가 없을 때
+  2. 서울: 데이터 신선도. 모든 단계에서 같은 지표를 쓴다.
+     - `StarIndex/PackAgeMinutes`가 360분을 넘거나 데이터가 없을 때
+     - R1~R2에도 EC2와 DB가 24/7로 돌아 발행이 이어진다. `collect-only`와 `RawCollectedAgeMinutes`는 폐기했다(ADR-014)
   3. **us-east-1**: CloudFront 5xxErrorRate. SNS 토픽도 us-east-1에 따로 만든다.
   - health-cron은 쓰지 않는다.
 
 ### 3.6 비용 최소화 (서울, 부가세 10% 별도)
 **원칙**
 1. 개발은 로컬 docker-compose로 한다.
-2. AWS는 필요한 기간에만 쓴다. EC2는 W3부터, **RDS는 W3와 R3 이후에만** 켠다.
+2. AWS는 필요한 기간에만 쓴다. EC2는 W3부터 24/7로 켜고 DB(PostgreSQL 18)를 함께 돌린다. **RDS는 M0 시연 기간(W3)에만** 쓰고, 이후 최종 스냅샷을 만들고 삭제한다(ADR-014).
 3. 도메인, 인증서, NAT, ALB, ElastiCache, WAF는 쓰지 않는다.
 4. 앱 데이터는 S3 정적 팩이다.
 5. 측정 장비(삼각대, 수평계 앱)는 보유품이나 대여로 해결한다(0원).
 
 | 구성요소 | 선택 | 함정·근거 |
 |---|---|---|
-| EC2 | t4g.small(2GB) 1대, **CPU 크레딧 standard**, gp3 20GB, 스왑 2GB, `-Xmx768m`, Valkey 128MB | **T4g 무료 체험 2026-12-31까지** [확실]. Unlimited 모드는 초과 과금. **t4g.micro 전환 조건**: `-Xmx384m`, Valkey 64MB, 에이전트 v2 상태에서 7일 동안 MemAvailable ≥250MB이고 스왑이 거의 0 |
+| EC2 | t4g.small(2GB) 1대만, **CPU 크레딧 standard**, gp3 20GB, 스왑 2GB, `-Xmx512m -XX:+UseSerialGC`(Metaspace 192m, code cache 64m, direct 64m), Valkey 128MB, PostgreSQL 18(`shared_buffers` 128MB, localhost만 listen) | **T4g 무료 체험 2026-12-31까지** [확실]. Unlimited 모드는 초과 과금. 앱과 DB를 한 대에 두므로 **t4g.micro 전환 조건은 폐지**했다(ADR-014). 리허설 실측(`scripts/ec2sim.sh`, 10-01, 운영 구성): postgres 54MiB, valkey 13MiB, 서버 JVM 310MiB, OS·에이전트 포함 1,600MiB 중 647MiB |
 | 네트워크 | 기본 VPC 퍼블릭 서브넷, EIP 1개, SG는 CloudFront prefix list만 허용, SSM으로 접속 | **NAT를 쓰면 월 43 USD 이상 추가** [확실]. IPv4 월 3.65(정지 중에도 과금) [확실] |
-| RDS | db.t4g.micro **MySQL 8.4**, Single-AZ, gp3 20GB, 퍼블릭 액세스 off, PI off | **8.0으로 만들면 Extended Support가 월 약 175 USD 추가** [확실]. 정지해도 7일 뒤 자동 시작 [확실] → 긴 공백에는 **스냅샷을 만든 뒤 삭제** |
+| RDS | **M0 시연 기간만**. db.t4g.micro **PostgreSQL 18**, Single-AZ, gp3 20GB, 퍼블릭 액세스 off, PI off | 정지해도 7일 뒤 자동 시작 [확실] → 시연 뒤 **최종 스냅샷을 만들고 삭제**. 이후 EC2 PostgreSQL로 옮긴다(`DB_URL`만 교체, DB-PLAN 5.7, ADR-014) |
 | CloudFront | PAYG + 기본 도메인 | 월 1TB·1천만 요청 무료 [확실] |
 | 기타 | SSM Standard, CloudWatch 알람 3개, Budgets, Scheduler(월 1,400만 호출 무료), Unity Personal, APNs, data.go.kr, GitHub private + Linux | 0원 |
 
@@ -269,10 +271,10 @@ docs/       adr/, ATTRIBUTION.md, review-notes.md, verification/, demo-script.md
 | 기간 | AWS 가동 | 금액 |
 |---|---|---|
 | M0(~10/19) | W3부터 약 10일(EC2 무료, RDS 약 216h ≈ 5.4, 스토리지·EIP·EBS 약 2.5) | **약 8~12 USD**(RDS를 2주 켜면 14~17) |
-| R1~R2(약 6~9주) | EC2 `collect-only` + EIP + EBS + S3 raw, **RDS는 스냅샷 뒤 삭제** | **월 약 6** |
-| R3~2026-12-31 | 24/7(RDS 복원) | **월 약 26** |
-| 2027-01~ | 심사·운영 24/7 | **월 약 42(small) / 34(micro)** |
-| 2027 선택 G-C1 | Scheduler로 16:10 RDS 시작 → 16:30 EC2 시작 → 01:30 EC2 정지 → 01:35 RDS 정지<br>Spring은 `hikari.initialization-fail-timeout=-1`, systemd `Restart=on-failure`<br>Scheduler 역할에는 `ec2:Start/StopInstances`와 `rds:Start/StopDBInstance`만 준다<br>정지 시간대에는 알람 ②·③을 `DisableAlarmActions`하거나 `TreatMissingData=notBreaching`으로 둔다 | 월 약 20(small) / 18(micro). **심사 기간에는 쓰지 않음** |
+| R1~R2(약 6~9주) | EC2 24/7(DB 포함) + EIP·IPv4 3.65 + EBS + S3, **RDS는 M0 뒤 스냅샷 만들고 삭제**(EC2 무료 체험 2026-12-31까지) | **월 약 6**(추정, ADR-014) |
+| R3~2026-12-31 | EC2 24/7(DB 포함), RDS 없음 | **월 약 6**(추정, ADR-014) |
+| 2027-01~ | 심사·운영 24/7, EC2 t4g.small + EBS + IPv4, RDS 없음 | **월 약 21**(추정, ADR-014) |
+| 2027 선택 G-C1 | Scheduler로 16:30 EC2 시작 → 01:30 EC2 정지(DB도 같은 EC2에서 함께 시작·정지)<br>Spring은 `hikari.initialization-fail-timeout=-1`, systemd `Restart=on-failure`<br>Scheduler 역할에는 `ec2:Start/StopInstances`만 준다<br>정지 시간대에는 알람 ②·③을 `DisableAlarmActions`하거나 `TreatMissingData=notBreaching`으로 둔다 | 금액은 RDS 제외로 재산정 필요(이전 20/18은 RDS 포함). **심사 기간에는 쓰지 않음** |
 
 - **계정**
   - **Free plan이면 W1에 즉시 Paid로 전환한다.** Free plan은 6개월이 지나거나 크레딧을 다 쓰면 계정이 닫힌다 [확실]. 남은 크레딧은 가입 후 12개월까지 적용된다.
@@ -280,10 +282,10 @@ docs/       adr/, ATTRIBUTION.md, review-notes.md, verification/, demo-script.md
 - **Budgets**: 2026년 월 30 USD, 2027-01부터 월 45 USD. 50/80/100%에 알림을 건다. M0 달에는 50% 알림이 울릴 수 있다.
 - **비용 체크리스트**(W3 완료 기준에 포함)
   - `aws ec2 describe-instance-credit-specifications` = standard
-  - RDS 8.4, Single-AZ, PI off, 퍼블릭 off
+  - RDS(M0 시연만) PostgreSQL 18, Single-AZ, PI off, 퍼블릭 off. 시연 뒤 최종 스냅샷과 삭제 확인(ADR-014)
   - NAT 0, EIP 1
   - `cost-log.md` 첫 기록
-- **2027 선택**: Paid 전환 뒤 RDS 1년 예약(선결제 없음)을 검토한다. 12개월 약정 위험이 있다.
+- **2027 선택**: (폐지) RDS 1년 예약 검토는 하지 않는다. M0 뒤 RDS를 쓰지 않는다(ADR-014).
 - **G-C2(선택)**: CloudFront VPC origin(추가 비용 0)과 자동 할당 IPv4 조합으로 EIP와 비밀 헤더 의존을 없앨 수 있는지 검증한다. 퍼블릭 서브넷에서 되는지는 [미확인]이다.
 
 ## 4. 스카이뷰 핵심 알고리즘
@@ -450,7 +452,7 @@ docs/       adr/, ATTRIBUTION.md, review-notes.md, verification/, demo-script.md
 |---|---|---|
 | W1 (9/30~10/4) | **사용자 조치(8장)**. 천문연 출몰 API로 과거 locdate 1콜이 되는지 확인<br>`git init`과 private 저장소, 번들 ID, ADR-004<br>`catalog-builder` → `skypack.bin` v1(≤5.5등), T9 QA<br>SkyCore 계산과 하늘 모듈(인일표의 목록)<br>docker-compose<br>**G-E1(디스크) 판정 뒤** Unity 6.3을 배경으로 설치한다. E3/E4 판정은 R2에서 한다 | **G0**, **G1a** |
 | W2 (10/5~10/11) | SkySensors와 `SkyScreen` MVP(별·선·한글명·해달행성·HUD·라벨·탭·드래그 수동 모드)<br>**하늘 셰이더, 해질녘 재생 버튼, m_tw, 단계별 선·라벨 알파**<br>G3 스모크, T-P1·T-P5 실기기 스모크<br>Boot 4.1 골격(더미 Job을 실행하면 `BATCH_JOB_EXECUTION` 행 생성, QueryDSL 7.x Q타입 빌드)과 `forecastIngestJob`·`astroDailyJob`(**로컬**) | ① 실기기 해질녘 재생 1회(자세한 기준은 표 아래)<br>② **G3 스모크 결과 기록**(갱신 도착 여부, `CMErrorTrueNorthNotAvailable` 여부). 실패하면 cmMagnetic 폴백으로 회전 추적 시연을 확인<br>③ T-P1·T-P5 실기기 통과<br>④ 로컬 ETL 1회 성공 |
-| W3 (10/12~10/19) | `starIndexPublishJob`(17개 시·도, 72시간 SKY/PTY, kasi 시각), 앱 `IndexChip`<br>AWS 일괄(**RDS는 W3 첫날 생성**)<br>관리자(JWT, 실행 이력, SSM 터널)<br>배포 동결 → 24시간 무인 운영 → 리허설 | ① CloudFront `/api/health` UP, `/ws/v1/live` 101<br>② `/raw/…`·`/deploy/…`로 S3 객체를 받을 수 없음(EC2 필터 403). 버킷 정책은 CLI 비인가 GetObject 거부로 따로 확인<br>③ **T19 통과**(발행 뒤 5분 안에 실기기 manifest 갱신)<br>④ **배포 후 연속 24시간(발표 8회) 무인 수집·발행 성공**<br>⑤ 3.6 비용 체크리스트 통과<br>⑥ 시연 뒤 RDS는 **스냅샷을 만들고 삭제** |
+| W3 (10/12~10/19) | `starIndexPublishJob`(17개 시·도, 72시간 SKY/PTY, kasi 시각), 앱 `IndexChip`<br>AWS 일괄(**RDS는 W3 첫날 생성**)<br>관리자(JWT, 실행 이력, SSM 터널)<br>배포 동결 → 24시간 무인 운영 → 리허설 | ① CloudFront `/api/health` UP, `/ws/v1/live` 101<br>② `/backup/…`·`/deploy/…`로 S3 객체를 받을 수 없음(EC2 필터 403). 버킷 정책은 CLI 비인가 GetObject 거부로 따로 확인<br>③ **T19 통과**(발행 뒤 5분 안에 실기기 manifest 갱신)<br>④ **배포 후 연속 24시간(발표 8회) 무인 수집·발행 성공**<br>⑤ 3.6 비용 체크리스트 통과<br>⑥ 시연 뒤 EC2 PostgreSQL 18로 전환(DB-PLAN 5.7)하고 RDS는 **최종 스냅샷을 만들고 삭제**(ADR-014) |
 
 W2 해질녘 재생 합격 기준
 - 알파가 0보다 큰 별은 m<m_lim인 별뿐이다.
@@ -477,9 +479,9 @@ W2 해질녘 재생 합격 기준
 ### 출시 트랙: R1 2–3 + R2 4–6(No-Go 시 약 2.5) + R3 2–3 + R4 1–2 + R5 2–3 = **11~17주**, 전체 14~20주, 제출 2027-01~02(추정)
 | 단계 | 작업 | 완료 기준 |
 |---|---|---|
-| R1 스카이뷰 완성 | 전체 카탈로그(≤6.5), 검색 안내, 보정 UX, 접근성, 은하, 박명 연동 튜닝, 하늘색 튜닝(콘택트 시트)<br>T2 골든(Kotlin), **T5·T16: 천문연 API를 locdate로 10지점×30일 일괄 조회(약 300콜)**<br>G2 정식 측정, G3, G5<br>EC2 `collect-only`로 raw 축적 | **G1**, G2, G3, G5, T8, T10, T14~T18 |
+| R1 스카이뷰 완성 | 전체 카탈로그(≤6.5), 검색 안내, 보정 UX, 접근성, 은하, 박명 연동 튜닝, 하늘색 튜닝(콘택트 시트)<br>T2 골든(Kotlin), **T5·T16: 천문연 API를 locdate로 10지점×30일 일괄 조회(약 300콜)**<br>G2 정식 측정, G3, G5<br>**C9 적중률 스냅숏**: `verify_station`·`forecast_verification` 기록 시작(첫 주 11/2~11/6, 기한 11/28, ADR-014) | **G1**, G2, G3, G5, T8, T10, T14~T18 |
 | R2 Unity AR | **U-스파이크(5일)**: UaaL 임베드, 브리지 rotation·offset, 빈 천구<br>→ **Go/No-Go**(G-E3, G-E4, G-U1, G-U2, G-U4, G-U5, 스파이크 수준 G-U3)<br>→ **U-구현**(라벨, 탭, 목표 안내, 보정 왕복, 시간 동기화, 연출 3종)<br>→ G-U6, G-U7, G-U8, T-U1 | G-U 전부 통과와 T-U1(No-Go에서 ①을 고르면 **G10**). `AR_UNITY` OFF 빌드도 정상 |
-| R3 백엔드 완성 | **RDS 스냅샷 복원**, raw 재적재, 시군구·명소 팩, 천문현상, VIIRS, 카탈로그 Job, 품질 게이트, 교차검증, **T13** | G6, G11, G12 |
+| R3 백엔드 완성 | `forecastVerifyJob`(ASOS 관측값 채움), 시군구·명소 팩, 천문현상, VIIRS, 카탈로그 Job, 품질 게이트, 교차검증, **T13** | G6, G11, G12 |
 | R4 앱 통합 | 오늘 밤·명소·천문현상 탭(팩 기반), 오프라인, LiveSocket, 위젯, 해외·장애 화면, 데이터 삭제, `legal/*.html`, App Group, G9에 따른 푸시 | G7, G9 |
 | R5 출시 | privacy manifest(앱, 위젯, UnityFramework), 라벨, 연령등급, Content Rights, 스크린샷, 심사 노트, TestFlight 1주, 제출, 반려 버퍼 1주 | G8, 승인 |
 
@@ -551,9 +553,9 @@ W2 해질녘 재생 합격 기준
     - 헤더 값 불일치 → 403
     - 8081 loopback actuator → 200
   - 배치: `@SpringBatchTest` + WireMock, 멱등성
-  - Testcontainers MySQL 8.4(Hibernate 7.4.5 호환 실측)
+  - Testcontainers PostgreSQL 18(로케일 C) + valkey 8 + WireMock(ADR-013/014)
   - WS, 계약 테스트
-- **T13 백테스트**: 17:00 발표 SKY/PTY와 ASOS 전운량을 10곳 × 30일 비교해 혼동행렬을 만든다. raw는 R1~R2의 `collect-only`에서 확보한다.
+- **T13 백테스트**: 17:00 발표 SKY/PTY와 ASOS 전운량을 10곳 × 30일 비교해 혼동행렬을 만든다. 예보 쪽 값은 R1부터 `forecast_verification`에 기록한 17:00(d17)·전날 23:00(p23) 발표 스냅숏(C9)이고, ASOS 관측값은 R3 `forecastVerifyJob`이 채운다(ADR-014).
 
 ### 6.2 실기기 방향 검증
 - **측정 방법**: 삼각대(보유 또는 대여), 다른 기기의 수평계 앱, `SkyProbeView` 카메라 십자선, 1km 이상 떨어진 랜드마크. 먼저 측정자 반복성(σ≤0.5°)을 확인한다. 밤에는 달, 토성, 북극성을 기준으로 한다.
@@ -600,7 +602,7 @@ W2 해질녘 재생 합격 기준
   - 로그인은 없고 데이터 삭제를 제공한다.
 - **메타데이터**: Privacy·Support URL은 CloudFront `legal/*.html`이다. 출처 화면을 두고 Content Rights를 신고한다.
 - **심사 운영**
-  - GPX 쿠퍼티노로 확인한다. EC2가 꺼져도 하늘과 팩은 동작해야 한다. 심사 기간에는 EC2와 RDS를 24/7로 둔다.
+  - GPX 쿠퍼티노로 확인한다. EC2가 꺼져도 하늘과 팩은 동작해야 한다. 심사 기간에는 EC2(DB 포함)를 24/7로 둔다(ADR-014).
   - 심사 노트: 한국 데이터 차별점(4.3(b)), 해외 데모, 낮·실내에서는 해질녘 재생과 수동 모드로 확인하는 법, 보정, AR 사용법(4.2.1)
 - **스토어**: 스크린샷(하늘·노을 재생, 지수, AR, 위젯), EU DSA 판단
 
@@ -611,11 +613,11 @@ W2 해질녘 재생 합격 기준
 | 나침반 오차, 축 부호 오류 | 배지, 프레임별 누적 보정, 수동 모드, R 열 구성, T7, G2 |
 | 대략적 위치에서 진북 프레임 불가 | W2 G3 스모크, magnetic 폴백을 W2 범위에 포함 |
 | Unity 환경·일정·메모리 | R2 Go/No-Go, 사용자 재결정, `AR_UNITY` OFF 빌드 유지 |
-| **비용 함정** | RDS 8.4, NAT 미사용, standard 크레딧, Free plan은 W1에 Paid 전환, RDS 긴 공백엔 스냅샷 뒤 삭제, macOS CI 미사용, Budgets, cost-log |
+| **비용 함정** | RDS는 M0 시연만 쓰고 최종 스냅샷 뒤 삭제(정지 7일 뒤 자동 시작, ADR-014), NAT 미사용, standard 크레딧, Free plan은 W1에 Paid 전환, macOS CI 미사용, Budgets, cost-log |
 | 팩 전파 지연 | manifest TTL 60초, 불변 버전 경로, 롤백 시 무효화, T19 |
 | 관리자 자격증명 노출 | 공개 경로 차단, SSM 터널, 로그인 실패 잠금 |
 | 하늘색 품질(주관성, 색공간) | 색공간 계약, T17 절대색, 콘택트 시트, '표현용' 표기, 폴백 3단계 |
-| T13 데이터 공백 | R1~R2 `collect-only`, raw 120일 보존 |
+| T13 데이터 공백 | R1 첫 주부터 `forecast_verification` 스냅숏(C9, 기한 11/28), 32일 보존(ADR-014) |
 | 위치정보법 | 전국 팩, 앱은 조회 API 호출 금지, 푸시는 G9 뒤 |
 | Boot 4.1과 QueryDSL 포크 | ADR-004, W2 호환 확인, 5.1.0 폴백, 정렬 키 화이트리스트 |
 | 4.3(b) 유사 앱 판정 | 한국 지수, 명소, 노을 재생을 전면에 |

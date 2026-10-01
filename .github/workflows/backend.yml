@@ -5,9 +5,9 @@ name: backend
 on:
   push:
     branches: [main]
-    paths: ["backend/**", "data/catalog-src/**", ".github/workflows/backend.yml"]
+    paths: ["backend/**", "data/catalog-src/**", "deploy/**", "scripts/**", ".github/workflows/backend.yml"]
   pull_request:
-    paths: ["backend/**", "data/catalog-src/**", ".github/workflows/backend.yml"]
+    paths: ["backend/**", "data/catalog-src/**", "deploy/**", "scripts/**", ".github/workflows/backend.yml"]
 
 permissions:
   contents: read
@@ -27,6 +27,13 @@ jobs:
           distribution: temurin
           java-version: "21"
       - uses: gradle/actions/setup-gradle@v6
+      - name: No code reads the dropped tables (ADR-014, DB-PLAN 6.1)
+        run: |
+          if grep -rnE '\bkma_forecast\b|kma_forecast_issue|astro_night|star_index_hourly' backend/src/main/java; then
+            echo "dropped table referenced in backend/src/main/java" >&2; exit 1
+          fi
+      - name: Shell scripts (shellcheck is preinstalled on ubuntu-latest)
+        run: shellcheck --severity=warning -x -P deploy/postgres deploy/postgres/*.sh deploy/app/start.sh deploy/test/al2023-harness.sh scripts/etl.sh scripts/ec2sim.sh scripts/deploy-check.sh
       - name: Backend tests (Testcontainers PostgreSQL 18 + Valkey, WireMock) + catalog builder (T9)
         working-directory: backend
         run: ./gradlew --no-daemon test
