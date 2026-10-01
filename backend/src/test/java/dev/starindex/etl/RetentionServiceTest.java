@@ -28,7 +28,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/** DB-PLAN 6.1: RetentionService with a pinned asOf (boundaries ±1 s / ±1 day), packs, and Spring Batch metadata. */
+/** ADR-018 lifecycle with a pinned asOf (boundaries ±1 s / ±1 day): 12 h data, past nights, 2-day history, packs, Batch. */
 class RetentionServiceTest extends IntegrationTestBase {
     @Autowired RetentionService retention;
     @Autowired JdbcTemplate jdbc;
@@ -37,7 +37,7 @@ class RetentionServiceTest extends IntegrationTestBase {
     @Autowired JobOperator jobs;
     @Autowired @Qualifier("healthcheckJob") Job healthcheckJob;
 
-    /** 00:30 KST on the 1st: the night is still the last day of the previous month (calendar boundary). */
+    /** 00:30 KST on the 1st: the night in progress is still the last day of the previous month. */
     static final Instant AS_OF = OffsetDateTime.parse("2026-03-01T00:30:00+09:00").toInstant();
     static final long SEOUL = 1100000000L;
 
@@ -58,22 +58,22 @@ class RetentionServiceTest extends IntegrationTestBase {
 
     @Test
     void everyTableKeepsExactlyItsWindow() {
-        Instant shortCut = AS_OF.minus(Duration.ofDays(2)), longCut = AS_OF.minus(Duration.ofDays(8));
+        Instant dataCut = AS_OF.minus(Duration.ofHours(12)), historyCut = AS_OF.minus(Duration.ofDays(2));
         jdbc.update("INSERT INTO kma_forecast_hour (nx, ny, fcst_at, base_at, sky) VALUES (60, 127, ?, ?, 1), (60, 127, ?, ?, 1)",
-                ts(shortCut.minusSeconds(1)), ts(shortCut.minusSeconds(1)), ts(shortCut), ts(shortCut));
-        // night = 2026-02-28 → short keeps from 02-26, long from 02-20, calendars from 2026-01-01.
-        jdbc.update("INSERT INTO kasi_riseset (region_id, locdate) VALUES (?, '2026-02-25'), (?, '2026-02-26')", SEOUL, SEOUL);
+                ts(dataCut.minusSeconds(1)), ts(dataCut.minusSeconds(1)), ts(dataCut), ts(dataCut));
+        // night = 2026-02-28 (00:30 is before 06:00) → night data keeps 02-28 on; history keeps from 02-27 00:30.
+        jdbc.update("INSERT INTO kasi_riseset (region_id, locdate) VALUES (?, '2026-02-27'), (?, '2026-02-28')", SEOUL, SEOUL);
         jdbc.update("INSERT INTO star_index_nightly (region_id, night_date, base_at, score, grade) VALUES "
-                + "(?, '2026-02-25', now(), 50, 'FAIR'), (?, '2026-02-26', now(), 50, 'FAIR')", SEOUL, SEOUL);
+                + "(?, '2026-02-27', now(), 50, 'FAIR'), (?, '2026-02-28', now(), 50, 'FAIR')", SEOUL, SEOUL);
         jdbc.update("INSERT INTO astro_crosscheck (region_id, night_date, field, diff_seconds) VALUES "
-                + "(?, '2026-02-19', 'sunset', 1), (?, '2026-02-20', 'sunset', 1)", SEOUL, SEOUL);
+                + "(?, '2026-02-26', 'sunset', 1), (?, '2026-02-27', 'sunset', 1)", SEOUL, SEOUL);
         jdbc.update("INSERT INTO etl_api_call (source, operation, request_key, duration_ms, outcome, called_at) VALUES "
-                + "('KMA_VILAGE', 'op', 'a', 1, 'OK', ?), ('KMA_VILAGE', 'op', 'b', 1, 'OK', ?)", ts(longCut.minusSeconds(1)), ts(longCut.plusSeconds(1)));
-        jdbc.update("INSERT INTO kasi_astro_event (locdate, seq, event) VALUES ('2025-12-31', 1, 'x'), ('2026-01-01', 1, 'x')");
+                + "('KMA_VILAGE', 'op', 'a', 1, 'OK', ?), ('KMA_VILAGE', 'op', 'b', 1, 'OK', ?)", ts(historyCut.minusSeconds(1)), ts(historyCut.plusSeconds(1)));
+        jdbc.update("INSERT INTO kasi_astro_event (locdate, seq, event) VALUES ('2026-02-27', 1, 'x'), ('2026-02-28', 1, 'x')");
         jdbc.update("INSERT INTO kasi_special_day (locdate, date_kind, date_name, is_holiday) VALUES "
-                + "('2025-12-31', '01', 'x', false), ('2026-01-01', '01', 'x', true)");
+                + "('2026-02-27', '01', 'x', false), ('2026-02-28', '01', 'x', true)");
         jdbc.update("INSERT INTO kasi_lunar_day (sol_date, lun_year, lun_month, lun_day, lun_leap) VALUES "
-                + "('2025-12-31', 2025, 11, 12, false), ('2026-01-01', 2025, 11, 13, false)");
+                + "('2026-02-27', 2026, 1, 11, false), ('2026-02-28', 2026, 1, 12, false)");
 
         var r = retention.purge(AS_OF);
 
@@ -83,17 +83,27 @@ class RetentionServiceTest extends IntegrationTestBase {
             assertEquals(1, r.deleted().get(t), t + " deleted");
             assertEquals(1, count("SELECT COUNT(*) FROM " + t), t + " kept");
         }
-        assertEquals(1, count("SELECT COUNT(*) FROM kma_forecast_hour WHERE fcst_at = ?", ts(shortCut)));
-        assertEquals(1, count("SELECT COUNT(*) FROM kasi_astro_event WHERE locdate = '2026-01-01'"),
-                "at 00:30 on 03-01 the night is 02-28: January is still 'last month'");
+        assertEquals(1, count("SELECT COUNT(*) FROM kma_forecast_hour WHERE fcst_at = ?", ts(dataCut)));
+        assertEquals(1, count("SELECT COUNT(*) FROM kasi_astro_event WHERE locdate = '2026-02-28'"),
+                "at 00:30 on 03-01 the night in progress is 02-28: its data stays until 06:00");
     }
 
     @Test
-    void theNightTurnsAtNoonKst() {
-        jdbc.update("INSERT INTO star_index_nightly (region_id, night_date, base_at, score, grade) VALUES (?, '2026-02-25', now(), 50, 'FAIR')", SEOUL);
-        retention.purge(OffsetDateTime.parse("2026-02-28T11:59:59+09:00").toInstant());   // night 02-27 → keeps 02-25
+    void forecastHoursStillToComeSurviveAnIngestionOutage() {
+        // The newest issue is 3 days old (no ingestion since), but its hours ahead of asOf are kept: lifetime counts
+        // from the forecast time, not from when the row was collected.
+        jdbc.update("INSERT INTO kma_forecast_hour (nx, ny, fcst_at, base_at, sky) VALUES (60, 127, ?, ?, 1)",
+                ts(AS_OF.plus(Duration.ofHours(5))), ts(AS_OF.minus(Duration.ofDays(3))));
+        retention.purge(AS_OF);
+        assertEquals(1, count("SELECT COUNT(*) FROM kma_forecast_hour"));
+    }
+
+    @Test
+    void theNightTurnsAtSixKst() {
+        jdbc.update("INSERT INTO star_index_nightly (region_id, night_date, base_at, score, grade) VALUES (?, '2026-02-27', now(), 50, 'FAIR')", SEOUL);
+        retention.purge(OffsetDateTime.parse("2026-02-28T05:59:59+09:00").toInstant());   // night 02-27 still in progress
         assertEquals(1, count("SELECT COUNT(*) FROM star_index_nightly"));
-        retention.purge(OffsetDateTime.parse("2026-02-28T12:00:00+09:00").toInstant());   // night 02-28 → keeps from 02-26
+        retention.purge(OffsetDateTime.parse("2026-02-28T06:00:00+09:00").toInstant());   // night 02-28 → 02-27 has passed
         assertEquals(0, count("SELECT COUNT(*) FROM star_index_nightly"));
     }
 
@@ -139,7 +149,7 @@ class RetentionServiceTest extends IntegrationTestBase {
         assertFalse(Files.exists(file(i3)));
         assertFalse(Files.exists(file(i3).getParent()), "the empty version directory goes too");
         assertTrue(Files.exists(file(i2)));
-        assertFalse(Files.exists(file("packs/index/orphan-old/index.json.gz")), "orphan older than 8 days");
+        assertFalse(Files.exists(file("packs/index/orphan-old/index.json.gz")), "orphan older than 2 days");
         assertTrue(Files.exists(file("packs/index/20250101-1700-backfill/index.json.gz")),
                 "a fresh file of an old night is kept: age comes from the file, not the version name");
         assertTrue(Files.exists(file(PackPublisher.MANIFEST_PATH)), "the manifest is never swept");
@@ -181,11 +191,12 @@ class RetentionServiceTest extends IntegrationTestBase {
     }
 
     @Test
-    void batchMetadataOlderThanEightDaysGoesAsWholeInstancesButNeverARunningOne() throws Exception {
+    void batchMetadataOlderThanTwoDaysGoesAsWholeInstancesButNeverARunningOne() throws Exception {
         long old1 = runHealthcheck(), old2 = runHealthcheck(), recent = runHealthcheck(), running = runHealthcheck();
-        age(old1, 9, "COMPLETED");
-        age(old2, 9, "FAILED");
-        age(running, 9, "STARTED");
+        age(old1, 3, "COMPLETED");
+        age(old2, 3, "FAILED");
+        age(running, 3, "STARTED");
+        age(recent, 1, "COMPLETED");
         assertTrue(batchRows(old1) >= 5, "instance, execution, params, contexts and step rows exist before");
 
         var r = retention.purge(now);

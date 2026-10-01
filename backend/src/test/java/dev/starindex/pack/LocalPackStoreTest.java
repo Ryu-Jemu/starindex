@@ -54,13 +54,15 @@ class LocalPackStoreTest {
     }
 
     @Test
-    void retentionFloorsAreEnforcedAndDefaultsApplied() {
-        var d = new EtlProperties.Etl(null, 0, 0, 0, 0, 0, null);
-        assertEquals(2, d.forecastRetentionDays());
-        assertEquals(8, d.auditRetentionDays());
+    void lifecycleFloorsAreEnforcedAndDefaultsApplied() {
+        var d = new EtlProperties.Etl(null, 0, 0, null, null, 0, null);
+        assertEquals(java.time.Duration.ofHours(12), d.dataRetention());
+        assertEquals(java.time.Duration.ofDays(2), d.historyRetention());
         assertEquals(3, d.packKeepMin());
-        assertThrows(IllegalArgumentException.class, () -> new EtlProperties.Etl(null, 0, 0, 1, 8, 3, null));
-        assertThrows(IllegalArgumentException.class, () -> new EtlProperties.Etl(null, 0, 0, 2, 7, 3, null));
-        assertEquals(30, new EtlProperties.Etl(null, 0, 0, 30, 30, 3, null).auditRetentionDays(), "longer is allowed");
+        assertThrows(IllegalArgumentException.class, () -> new EtlProperties.Etl(null, 0, 0, java.time.Duration.ofHours(11), null, 3, null),
+                "the 05:20 run needs yesterday's evening forecast");
+        assertThrows(IllegalArgumentException.class, () -> new EtlProperties.Etl(null, 0, 0, null, java.time.Duration.ofHours(23), 3, null));
+        assertEquals(java.time.Duration.ofDays(30),
+                new EtlProperties.Etl(null, 0, 0, null, java.time.Duration.ofDays(30), 3, null).historyRetention(), "longer is allowed");
     }
 }

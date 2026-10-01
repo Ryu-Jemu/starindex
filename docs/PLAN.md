@@ -1,5 +1,7 @@
 # 오늘 밤 별 지수: 스카이뷰 + 하늘색 변화 + Unity AR, 최소 비용 작업 계획 (rev4, 2026-09-29)
 
+> **2026-10-01 변경 3 (ADR-018):** 데이터 수명 주기를 정했다. 수집 데이터는 12시간(예보는 예보 시각 기준), 이력은 2일이고, 매 수집 끝에 정리한다. 밤 날짜 경계는 06시다.
+
 > **2026-10-01 변경 2 (ADR-017, 사용자 결정): AWS를 쓰지 않는다. 전부 무과금이다.** 별 보기(스카이뷰·해질녘 재생·천체 상세)는 기기 안에서만 계산한다. '오늘 밤 지수' ETL은 **GitHub Actions 예약 실행**(`.github/workflows/etl.yml`)이 Neon Free PostgreSQL에 수집하고, 팩은 **Neon Object Storage 공개 버킷**에 올린다. 앱은 HTTPS로 manifest를 2분마다 확인한다. 상시 서버는 없고, 관리자 화면은 Mac 로컬(`http://localhost:8080/admin`)에서 연다. 그래서 아래의 CloudFront·EC2·CodeDeploy·IAM·CloudWatch·SSM·Budgets 내용(D8·D10·D11·D12의 AWS 부분, 3.5, 3.6의 AWS 행, W3 "AWS 일괄", 8장 2번)은 기록으로만 남긴다. 운영 절차는 `docs/ETL.md` 8절이다.
 
 > **2026-09-30·10-01 변경:** DB는 PostgreSQL 18이다(ADR-013). 운영 DB는 **Neon Free**(관리형 PostgreSQL 18, AWS ap-southeast-1 싱가포르, TLS, direct 엔드포인트)다(ADR-015, `docs/DB-PLAN.md` 11). ADR-014의 "앱 EC2에 직접 설치"를 대체하고, ADR-014의 보관 결정은 그대로 둔다. EC2에는 JVM과 Valkey만 돈다. **RDS는 시연에도 쓰지 않는다(ADR-016, 10-01 사용자 결정: DB는 Neon 무과금).** 다른 PostgreSQL 18로 옮길 일이 생기면 `DB_URL`만 바꾼다. 보관은 기본 2일이고 예외는 `docs/DB-PLAN.md` 2장을 따른다. ETL 사용법은 `docs/ETL.md`.

@@ -241,9 +241,10 @@ struct IndexSummaryTests {
         let d = NightDate(year: 2026, month: 10, day: 12)
         #expect(NightDate.of(kst(2026, 10, 13, 3)) == d)          // 03:00 next morning → still the 12th's night
         #expect(NightDate.of(kst(2026, 10, 12, 18)) == d)
-        #expect(NightDate.of(kst(2026, 10, 12, 12)) == d)         // 12:00 exactly starts the new night
-        #expect(NightDate.of(kst(2026, 10, 12, 11, 59, 59)) == NightDate(year: 2026, month: 10, day: 11))
-        #expect(NightDate.of(kst(2027, 1, 1, 6)) == NightDate(year: 2026, month: 12, day: 31))   // across New Year
+        #expect(NightDate.of(kst(2026, 10, 12, 6)) == d)          // 06:00 exactly starts the new night (ADR-018)
+        #expect(NightDate.of(kst(2026, 10, 12, 5, 59, 59)) == NightDate(year: 2026, month: 10, day: 11))
+        #expect(NightDate.of(kst(2026, 10, 12, 9)) == d)          // morning: "tonight" is already the coming night
+        #expect(NightDate.of(kst(2027, 1, 1, 5)) == NightDate(year: 2026, month: 12, day: 31))   // across New Year
         #expect(NightDate.of(utc("2026-10-12T15:30:00Z")) == d)  // = 00:30 KST on the 13th, any device time zone
         #expect(d.description == "2026-10-12" && NightDate("2026-10-12") == d && d.label == "10/12(월)")
         #expect(NightDate("2026-1-12") == nil && NightDate("x") == nil)

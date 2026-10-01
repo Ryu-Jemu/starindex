@@ -38,9 +38,12 @@ public class IndexService {
         this.astro = astro;
     }
 
-    /** The night a moment belongs to: the date of the preceding 12:00 KST (SERVICE-PLAN 4.2). */
+    /**
+     * The night a moment belongs to: the date of the preceding 06:00 KST (ADR-018). From the morning on, "tonight" is
+     * the coming night; until 06:00 it is still the night in progress. (Noon before ADR-018.)
+     */
     public static LocalDate nightDateOf(ZonedDateTime now) {
-        return now.withZoneSameInstant(AstroCalculator.KST).minusHours(12).toLocalDate();
+        return now.withZoneSameInstant(AstroCalculator.KST).minusHours(6).toLocalDate();
     }
 
     public List<RegionNight> compute(LocalDate nightDate, int seriesSlots, double lightFactor) {

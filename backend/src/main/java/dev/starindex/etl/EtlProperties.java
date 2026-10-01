@@ -8,21 +8,30 @@ import java.time.Duration;
 public final class EtlProperties {
     private EtlProperties() {}
 
-    /** Retention floors (DB-PLAN 4.3): 2 days to republish last night, 8 days for the 7-day G6 window + 1. */
-    public static final int MIN_FORECAST_RETENTION_DAYS = 2, MIN_AUDIT_RETENTION_DAYS = 8;
+    /**
+     * Lifecycle floors (ADR-018). Collected data: 12 hours, the least that still lets the last run of a night (05:20)
+     * compute it from its first dark hour (yesterday ~19:00). History: one full day of runs (8 forecast runs, the
+     * 24-hour unattended check and the admin page's history).
+     */
+    public static final Duration MIN_DATA_RETENTION = Duration.ofHours(12), MIN_HISTORY_RETENTION = Duration.ofDays(1);
 
+    /**
+     * @param dataRetention    forecast hours are deleted this long after their forecast time (night-keyed data and
+     *                         calendars go once their night or day has passed)
+     * @param historyRetention API call log, cross-check, pack history and files, Spring Batch metadata
+     */
     @ConfigurationProperties("starindex.etl")
     public record Etl(Duration kmaAvailabilityDelay, double forecastMinCompleteness, int astroDaysAhead,
-                      int forecastRetentionDays, int auditRetentionDays, int packKeepMin, Schedule schedule) {
+                      Duration dataRetention, Duration historyRetention, int packKeepMin, Schedule schedule) {
         public Etl {
-            if (forecastRetentionDays <= 0) forecastRetentionDays = MIN_FORECAST_RETENTION_DAYS;
-            if (auditRetentionDays <= 0) auditRetentionDays = MIN_AUDIT_RETENTION_DAYS;
-            if (forecastRetentionDays < MIN_FORECAST_RETENTION_DAYS)
-                throw new IllegalArgumentException("starindex.etl.forecast-retention-days must be >= " + MIN_FORECAST_RETENTION_DAYS
-                        + " (last night must stay republishable): " + forecastRetentionDays);
-            if (auditRetentionDays < MIN_AUDIT_RETENTION_DAYS)
-                throw new IllegalArgumentException("starindex.etl.audit-retention-days must be >= " + MIN_AUDIT_RETENTION_DAYS
-                        + " (G6 judges 7 consecutive days): " + auditRetentionDays);
+            if (dataRetention == null || dataRetention.isZero() || dataRetention.isNegative()) dataRetention = Duration.ofHours(12);
+            if (historyRetention == null || historyRetention.isZero() || historyRetention.isNegative()) historyRetention = Duration.ofDays(2);
+            if (dataRetention.compareTo(MIN_DATA_RETENTION) < 0)
+                throw new IllegalArgumentException("starindex.etl.data-retention must be >= " + MIN_DATA_RETENTION
+                        + " (the 05:20 run still reads yesterday's evening forecast): " + dataRetention);
+            if (historyRetention.compareTo(MIN_HISTORY_RETENTION) < 0)
+                throw new IllegalArgumentException("starindex.etl.history-retention must be >= " + MIN_HISTORY_RETENTION
+                        + " (one full day of runs): " + historyRetention);
             if (packKeepMin <= 0) packKeepMin = 3;
             if (kmaAvailabilityDelay == null) kmaAvailabilityDelay = Duration.ofMinutes(15);
             if (forecastMinCompleteness <= 0) forecastMinCompleteness = 0.9;

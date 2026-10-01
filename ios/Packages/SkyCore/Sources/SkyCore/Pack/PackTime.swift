@@ -57,8 +57,8 @@ public enum KST {
     }
 }
 
-/// The night a moment belongs to: the KST date of the preceding 12:00 (backend `IndexService.nightDateOf`,
-/// SERVICE-PLAN 4.2). After midnight it is still "tonight", not "last night".
+/// The night a moment belongs to: the KST date of the preceding 06:00 (backend `IndexService.nightDateOf`, ADR-018).
+/// After midnight it is still "tonight", not "last night"; from the morning on, "tonight" is the coming night.
 public struct NightDate: Sendable, Hashable, Comparable, CustomStringConvertible {
     public let year: Int
     public let month: Int
@@ -79,9 +79,9 @@ public struct NightDate: Sendable, Hashable, Comparable, CustomStringConvertible
         self.init(year: y, month: m, day: d)
     }
 
-    /// Same rule as the backend: `now (KST) − 12 h → local date`.
+    /// Same rule as the backend: `now (KST) − 6 h → local date`.
     public static func of(_ date: Date) -> NightDate {
-        let c = KST.calendar.dateComponents([.year, .month, .day], from: date.addingTimeInterval(-12 * 3600))
+        let c = KST.calendar.dateComponents([.year, .month, .day], from: date.addingTimeInterval(-6 * 3600))
         return NightDate(year: c.year!, month: c.month!, day: c.day!)
     }
 

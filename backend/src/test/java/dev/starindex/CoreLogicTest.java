@@ -31,6 +31,16 @@ class CoreLogicTest {
     }
 
     @Test
+    void theNightTurnsAtSixKst() {   // ADR-018: from the morning on, "tonight" is the coming night
+        var kst = AstroCalculator.KST;
+        assertEquals(LocalDate.of(2026, 10, 12), dev.starindex.index.IndexService.nightDateOf(java.time.ZonedDateTime.of(2026, 10, 13, 5, 59, 59, 0, kst)));
+        assertEquals(LocalDate.of(2026, 10, 13), dev.starindex.index.IndexService.nightDateOf(java.time.ZonedDateTime.of(2026, 10, 13, 6, 0, 0, 0, kst)));
+        assertEquals(LocalDate.of(2026, 10, 13), dev.starindex.index.IndexService.nightDateOf(java.time.ZonedDateTime.of(2026, 10, 13, 23, 0, 0, 0, kst)));
+        assertEquals(LocalDate.of(2026, 12, 31), dev.starindex.index.IndexService.nightDateOf(
+                java.time.ZonedDateTime.of(2026, 12, 31, 20, 0, 0, 0, java.time.ZoneOffset.UTC)), "05:00 KST on Jan 1 → New Year's Eve");
+    }
+
+    @Test
     void kmaGridMatchesPublishedSeoulAndRejectsOutside() {
         assertEquals(new KmaGrid.Cell(60, 127), KmaGrid.toGrid(37.5665, 126.9780).orElseThrow());
         assertTrue(KmaGrid.toGrid(0, 0).isEmpty());

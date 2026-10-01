@@ -19,7 +19,6 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
-import java.time.YearMonth;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
@@ -31,8 +30,17 @@ import java.util.Set;
 import java.util.function.IntSupplier;
 
 /**
- * Daily retention (ADR-014, DB-PLAN 2.2 and 4.3): keep what the service needs for 2 days, and only what has a stated
- * reason for longer. Every cutoff derives from one {@code asOf} in Java (never SQL {@code now()}), so tests can pin it.
+ * Data lifecycle (ADR-018, replacing ADR-014's 2/8 days): collected data lives about 12 hours, history 2 days.
+ * <ul>
+ *   <li>{@code kma_forecast_hour}: rows whose forecast time is older than {@code data-retention} (12 h). Rows for
+ *   coming hours survive an ingestion outage.</li>
+ *   <li>Night- or day-keyed data ({@code kasi_riseset}, {@code star_index_nightly}, calendars): once that night or day
+ *   has passed (the night turns at 06:00 KST).</li>
+ *   <li>History ({@code etl_api_call}, {@code astro_crosscheck}, {@code data_pack} + pack files, Spring Batch
+ *   metadata): older than {@code history-retention} (2 days); the live, newest-3 and pinned packs always stay.</li>
+ * </ul>
+ * Runs at the end of every forecast run (every 3 hours) and in the daily job, so nothing outlives its limit by more
+ * than one run. Every cutoff derives from one {@code asOf} in Java (never SQL {@code now()}), so tests can pin it.
  * Each item runs on its own: a failure becomes a warning and the others still run.
  */
 @Service
@@ -64,25 +72,23 @@ public class RetentionService {
         var deleted = new LinkedHashMap<String, Integer>();
         var warnings = new ArrayList<String>();
         LocalDate night = IndexService.nightDateOf(asOf.atZone(AstroCalculator.KST));
-        int shortDays = etl.forecastRetentionDays(), longDays = etl.auditRetentionDays();
-        Instant shortCut = asOf.minus(Duration.ofDays(shortDays)), longCut = asOf.minus(Duration.ofDays(longDays));
-        // Calendars: from the 1st of the previous month of the current NIGHT (at 00:30 on the 1st it is still last month's night).
-        LocalDate calendarFrom = YearMonth.from(night).minusMonths(1).atDay(1);
+        Instant dataCut = asOf.minus(etl.dataRetention()), historyCut = asOf.minus(etl.historyRetention());
+        LocalDate historyDay = historyCut.atZone(AstroCalculator.KST).toLocalDate();
 
-        item(deleted, warnings, "kma_forecast_hour", () -> jdbc.update("DELETE FROM kma_forecast_hour WHERE fcst_at < ?", ts(shortCut)));
-        item(deleted, warnings, "kasi_riseset", () -> jdbc.update("DELETE FROM kasi_riseset WHERE locdate < ?", date(night.minusDays(shortDays))));
-        item(deleted, warnings, "star_index_nightly", () -> jdbc.update("DELETE FROM star_index_nightly WHERE night_date < ?", date(night.minusDays(shortDays))));
-        item(deleted, warnings, "astro_crosscheck", () -> jdbc.update("DELETE FROM astro_crosscheck WHERE night_date < ?", date(night.minusDays(longDays))));
-        item(deleted, warnings, "etl_api_call", () -> jdbc.update("DELETE FROM etl_api_call WHERE called_at < ?", ts(longCut)));
-        item(deleted, warnings, "kasi_astro_event", () -> jdbc.update("DELETE FROM kasi_astro_event WHERE locdate < ?", date(calendarFrom)));
-        item(deleted, warnings, "kasi_special_day", () -> jdbc.update("DELETE FROM kasi_special_day WHERE locdate < ?", date(calendarFrom)));
-        item(deleted, warnings, "kasi_lunar_day", () -> jdbc.update("DELETE FROM kasi_lunar_day WHERE sol_date < ?", date(calendarFrom)));
+        item(deleted, warnings, "kma_forecast_hour", () -> jdbc.update("DELETE FROM kma_forecast_hour WHERE fcst_at < ?", ts(dataCut)));
+        item(deleted, warnings, "kasi_riseset", () -> jdbc.update("DELETE FROM kasi_riseset WHERE locdate < ?", date(night)));
+        item(deleted, warnings, "star_index_nightly", () -> jdbc.update("DELETE FROM star_index_nightly WHERE night_date < ?", date(night)));
+        item(deleted, warnings, "astro_crosscheck", () -> jdbc.update("DELETE FROM astro_crosscheck WHERE night_date < ?", date(historyDay)));
+        item(deleted, warnings, "etl_api_call", () -> jdbc.update("DELETE FROM etl_api_call WHERE called_at < ?", ts(historyCut)));
+        item(deleted, warnings, "kasi_astro_event", () -> jdbc.update("DELETE FROM kasi_astro_event WHERE locdate < ?", date(night)));
+        item(deleted, warnings, "kasi_special_day", () -> jdbc.update("DELETE FROM kasi_special_day WHERE locdate < ?", date(night)));
+        item(deleted, warnings, "kasi_lunar_day", () -> jdbc.update("DELETE FROM kasi_lunar_day WHERE sol_date < ?", date(night)));
         try {
-            purgePacks(longCut, deleted, warnings);
+            purgePacks(historyCut, deleted, warnings);
         } catch (RuntimeException e) {
             warnings.add("팩 정리 실패: " + e);
         }
-        item(deleted, warnings, "batch_job_instance", () -> purgeBatch(longCut, warnings));
+        item(deleted, warnings, "batch_job_instance", () -> purgeBatch(historyCut, warnings));
         if (!warnings.isEmpty()) log.warn("retention warnings: {}", warnings);
         return new Result(deleted, warnings);
     }

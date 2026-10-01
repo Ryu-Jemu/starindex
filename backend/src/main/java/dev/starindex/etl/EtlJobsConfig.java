@@ -41,7 +41,7 @@ import java.util.stream.Collectors;
  * <pre>
  * forecastIngestJob    serviceKeyRequired → forecastFetch
  * starIndexPublishJob  indexPublish
- * forecastPipelineJob  serviceKeyRequired → forecastFetch → indexPublish      (scheduler, after every issue)
+ * forecastPipelineJob  serviceKeyRequired → forecastFetch → indexPublish → retention   (every issue; ADR-018)
  * astroDailyJob        retention → [key?] → kasiRiseSet → crosscheck            (no key: retention only)
  * astroEventsJob       serviceKeyRequired → astroEvents → specialDays? → lunar? (? = skipped if not approved)
  * apiKeyCheckJob       serviceKeyRequired → apiKeyCheck                         (one call per API)
@@ -119,7 +119,7 @@ public class EtlJobsConfig {
             if (scored == 0)
                 throw new EtlStopException(nightDate + " 밤: 예보가 있는 천문박명 시간대가 없어 지수를 만들 수 없습니다. "
                         + "forecastIngestJob을 먼저 실행하세요(예보는 발표 후 약 5일치만 있습니다). "
-                        + "저장 예보는 2일만 보관하므로 이틀보다 이전 밤은 다시 만들 수 없습니다.");
+                        + "저장 예보는 예보 시각부터 12시간만 남으므로 지난 밤은 다시 만들 수 없습니다(ADR-018).");
             var published = publisher.publishIndex(nightDate, nights, pack.hourlySlots());
             summary(c, nightDate + " 밤 지수 " + scored + "/" + nights.size() + "개 지점, 팩 " + published.version()
                     + " (" + published.bytes() + " B gz" + (published.newVersion() ? ", 새 버전" : ", 변경 없음")
@@ -136,8 +136,8 @@ public class EtlJobsConfig {
     Step retentionStep(JobRepository repo, RetentionService retention, EtlProperties.Etl etl) {
         return new StepBuilder("retention", repo).tasklet((c, ctx) -> {
             var r = retention.purge(java.time.Instant.now());
-            String text = "보존 정리 " + r.deleted() + " (예보 " + etl.forecastRetentionDays() + "일, 이력·발행 "
-                    + etl.auditRetentionDays() + "일, 달력 지난달 1일부터, 팩 현재·최신 " + etl.packKeepMin() + "·고정 유지)";
+            String text = "보존 정리 " + r.deleted() + " (수집 데이터 " + human(etl.dataRetention()) + "·지난 밤과 날짜, 이력·발행 "
+                    + human(etl.historyRetention()) + ", 팩 현재·최신 " + etl.packKeepMin() + "·고정 유지)";
             if (!r.warnings().isEmpty()) {
                 text += " 경고 " + r.warnings();
                 c.setExitStatus(new ExitStatus("COMPLETED_WITH_WARNINGS", String.join("; ", r.warnings())));
@@ -219,11 +219,12 @@ public class EtlJobsConfig {
                 .start(indexPublishStep).build();
     }
 
+    /** Retention closes every forecast run, so collected data never outlives its 12 hours by more than one run. */
     @Bean
     Job forecastPipelineJob(JobRepository repo, Step serviceKeyRequiredStep, Step forecastFetchStep, Step indexPublishStep,
-                            EtlJobListener l) {
+                            Step retentionStep, EtlJobListener l) {
         return new JobBuilder("forecastPipelineJob", repo).listener(l)
-                .start(serviceKeyRequiredStep).next(forecastFetchStep).next(indexPublishStep).build();
+                .start(serviceKeyRequiredStep).next(forecastFetchStep).next(indexPublishStep).next(retentionStep).build();
     }
 
     @Bean
@@ -298,6 +299,11 @@ public class EtlJobsConfig {
         } catch (RuntimeException e) {
             throw new EtlStopException("파라미터 " + name + "=" + value + " 형식이 틀렸습니다. 예: " + name + "=" + example);
         }
+    }
+
+    /** "12시간", "2일". */
+    static String human(java.time.Duration d) {
+        return d.toHours() % 24 == 0 ? d.toDays() + "일" : d.toHours() + "시간";
     }
 
     static void summary(StepContribution c, String text) {

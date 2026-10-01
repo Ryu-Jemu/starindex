@@ -75,9 +75,9 @@ starindex:
     kma-availability-delay: 15m # issues are served from HH:10 (활용가이드); 5 min margin
     forecast-min-completeness: 0.9
     astro-days-ahead: 3
-    # ADR-014 / DB-PLAN 2.2. Floors are enforced at startup (2 and 8).
-    forecast-retention-days: 2  # kma_forecast_hour, kasi_riseset, star_index_nightly
-    audit-retention-days: 8     # etl_api_call, astro_crosscheck, data_pack + files, BATCH_*
+    # Data lifecycle (ADR-018), applied at the end of every forecast run and in the daily job. Floors: 12h and 1d.
+    data-retention: 12h         # kma_forecast_hour by forecast time; kasi_riseset, star_index_nightly, calendars: past nights/days
+    history-retention: 2d       # etl_api_call, astro_crosscheck, data_pack + files, BATCH_*
     pack-keep-min: 3            # newest packs per kind always kept (plus the manifest's and pinned ones)
     schedule:
       enabled: ${ETL_SCHEDULE_ENABLED:false}

@@ -5,7 +5,7 @@
 - DB: PostgreSQL 18. 운영은 Neon Free(싱가포르, TLS, 직접 엔드포인트)다(ADR-013, ADR-015, ADR-016). 로컬은 docker compose다.
 - 캐시와 호출 한도: Valkey 8(로컬 compose, Actions 서비스 컨테이너)
 - 배치: Spring Batch 6
-- 보관: 서비스에 필요한 것만, 기본 2일(7절)
+- 보관(데이터 수명 주기, ADR-018): 수집 데이터 12시간, 이력 2일, 매 수집 끝에 정리(7절)
 
 ## 1. 인증키를 넣고 확인하기 (1분)
 
@@ -40,7 +40,7 @@ scripts/etl.sh pin <version>   # 이 팩 버전은 보존 정리에서 지우지
 | 명령 | 파라미터 | 예 |
 |---|---|---|
 | `forecast`, `pipeline` | `base=yyyyMMddHHmm` (발표 시각. 없으면 지금 받을 수 있는 최신 발표) | `base=202610121700` |
-| `publish`, `pipeline` | `nightDate=yyyy-MM-dd` (없으면 12시 기준 오늘 밤). 이미 더 최신 밤이나 발표가 발행돼 있으면 팩만 저장하고 manifest는 그대로 둔다(과거 밤 재계산이 앱을 되돌리지 않음). 예보는 2일만 보관하므로 이틀보다 이전 밤은 다시 만들 수 없다. | `nightDate=2026-10-12` |
+| `publish`, `pipeline` | `nightDate=yyyy-MM-dd` (없으면 06시 기준 오늘 밤). 이미 더 최신 밤이나 발표가 발행돼 있으면 팩만 저장하고 manifest는 그대로 둔다(과거 밤 재계산이 앱을 되돌리지 않음). 예보는 예보 시각부터 12시간만 남으므로 지난 밤은 다시 만들 수 없다(ADR-018). | `nightDate=2026-10-12` |
 | `astro` | `from=yyyy-MM-dd` | `from=2026-10-12` |
 | `events` | `month=yyyy-MM` (없으면 이번 달과 다음 달) | `month=2026-10` |
 
@@ -50,7 +50,7 @@ scripts/etl.sh pin <version>   # 이 팩 버전은 보존 정리에서 지우지
 |---|---|---|
 | `forecastIngestJob` | 키 확인 → 격자 17개 수집(격자마다 트랜잭션, 1000행씩 페이지 넘김) → 6개 항목만 시간대별 1행으로 병합 → 완결성 90% 검사 | 안내 메시지와 함께 중단 |
 | `starIndexPublishJob` | 지수 계산(천문박명 시간대 × 구름·강수·달) → 저장 → 팩(gzip, 압축본 sha256) → manifest → Redis 알림 | 예보가 없으면 중단 |
-| `forecastPipelineJob` | 위 두 Job을 이어서 실행(스케줄러용) | 중단 |
+| `forecastPipelineJob` | 위 두 Job을 이어서 실행한 뒤 데이터 수명 정리(7절). 예약 실행용 | 중단 |
 | `astroDailyJob` | 보존 정리(7절) → 키 판정 → 천문연 출몰시각 → 교차검증(Astronomy Engine은 그때그때 계산) | 보존 정리만 하고 COMPLETED |
 | `astroEventsJob` | 키 확인 → 천문현상 → 특일(선택) → 음양력(선택) | 중단 |
 | `apiKeyCheckJob` | 키 확인 → API별 1회 호출 보고 | 중단 |
@@ -105,18 +105,19 @@ scripts/etl.sh pin <version>   # 이 팩 버전은 보존 정리에서 지우지
   - 월출이 없는 날의 표기
   - 단기예보 과거 발표를 얼마나 거슬러 받을 수 있는지
 
-## 7. 보존 정책
+## 7. 데이터 수명 주기 (ADR-018)
 
-매일 `astroDailyJob`의 첫 단계에서 정리한다. 기준 시각 하나(asOf)에서 모든 기준을 계산하고, 밤 날짜는 KST 12시에 바뀐다. 세부와 근거는 `docs/DB-PLAN.md` 2절이다.
+매 수집 실행의 끝(`forecastPipelineJob`의 마지막 단계, 3시간마다)과 매일 `astroDailyJob`의 첫 단계에서 정리한다. 기준 시각 하나(asOf)에서 모든 기준을 계산하고, 밤 날짜는 **KST 06시**에 바뀐다(06시부터 '오늘 밤'은 다가오는 밤).
 
-| 대상 | 보관 |
+| 대상 | 수명 |
 |---|---|
-| `kma_forecast_hour`, `kasi_riseset`, `star_index_nightly` | 2일(어젯밤 재발행에 필요한 최소) |
-| `etl_api_call`, `astro_crosscheck`, `BATCH_*` 메타데이터 | 8일(G6 "7일 연속" 판정 + 1일) |
-| `data_pack` 행과 팩 파일 | 8일. 단 manifest가 가리키는 현재 팩, 종류별 최신 3개, `pinned` 팩은 지우지 않는다. |
-| 천문 달력 3종 | 밤 날짜가 속한 달의 지난달 1일부터 |
+| `kma_forecast_hour` | **12시간**: 예보 시각이 12시간 지난 행. 수집이 끊겨도 앞으로의 예보는 남는다 |
+| `kasi_riseset`, `star_index_nightly`, 천문 달력 3종 | 그 밤·그날이 지나면 |
+| `etl_api_call`, `astro_crosscheck`, `BATCH_*` 메타데이터 | **2일** |
+| `data_pack` 행과 팩 파일 | 2일. 단 manifest가 가리키는 현재 팩, 종류별 최신 3개, `pinned` 팩은 지우지 않는다 |
 
-- 설정: `starindex.etl.forecast-retention-days`(기본 2, 최소 2), `audit-retention-days`(기본 8, 최소 8), `pack-keep-min`(기본 3). 최소보다 작으면 앱이 시작하지 않는다.
+- 설정: `starindex.etl.data-retention`(기본 `12h`, 최소 12시간: 05:20 실행이 어제 저녁 예보를 읽어야 함), `history-retention`(기본 `2d`, 최소 1일), `pack-keep-min`(기본 3). 최소보다 작으면 앱이 시작하지 않는다.
+- 06시 이후에는 어젯밤 지수를 다시 만들 수 없다. 그 밤의 마지막 팩은 버킷에 남는다.
 - 팩 고정: 로컬 `scripts/etl.sh pin|unpin <version>`, 운영(Neon) `ops/neon/pin.sh <version> [--unpin]`.
 - 운영 백업: 매일 00:40 KST 워크플로가 전체 `pg_dump`(PostgreSQL 18 클라이언트)를 GitHub 아티팩트 `starindex-db-<날짜>`로 7일 보관한다. Neon Free의 복원 기간은 6시간뿐이라 이것이 실제 백업이다. 복구는 6시간 안이면 Neon 즉시 복원, 그보다 오래됐으면 `ops/neon/restore.sh`(운영 DB 옆 새 DB에 복원한 뒤 `DB_URL` 시크릿만 바꾼다).
 - 연결 풀은 유휴 연결을 남기지 않는다(최소 0, 60초, keepalive 끔). Neon이 5분 뒤 쉬어야 월 100 CU-시간 안에 든다. `/actuator/health`를 주기적으로 호출하지 않는다.
