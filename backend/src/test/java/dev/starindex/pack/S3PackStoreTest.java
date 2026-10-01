@@ -3,8 +3,8 @@ package dev.starindex.pack;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
-import org.testcontainers.containers.MinIOContainer;
-import org.testcontainers.utility.DockerImageName;
+import org.testcontainers.containers.GenericContainer;
+import org.testcontainers.containers.wait.strategy.Wait;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.http.urlconnection.UrlConnectionHttpClient;
@@ -17,19 +17,20 @@ import java.time.Instant;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/** S3PackStore against an S3-compatible server: the metadata CloudFront relies on, listing and deletes. */
+/** S3PackStore against an S3-compatible server (S3Mock): the metadata CloudFront relies on, listing and deletes. */
 class S3PackStoreTest {
-    // Pinned: MinIO stopped publishing community images on Docker Hub; quay.io keeps this release.
-    static final MinIOContainer MINIO = new MinIOContainer(DockerImageName.parse("quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z")
-            .asCompatibleSubstituteFor("minio/minio"));
+    // Adobe S3Mock (Docker Hub, amd64 + arm64). minio/minio is gone from Docker Hub and quay.io pulls timed out on CI.
+    static final GenericContainer<?> S3 = new GenericContainer<>("adobe/s3mock:5.2.3").withExposedPorts(9090)
+            .waitingFor(Wait.forHttp("/").forPort(9090).forStatusCodeMatching(c -> c < 500));
     static S3Client s3;
     static S3PackStore store;
 
     @BeforeAll
     static void start() {
-        MINIO.start();
-        s3 = S3Client.builder().region(Region.AP_NORTHEAST_2).endpointOverride(URI.create(MINIO.getS3URL())).forcePathStyle(true)
-                .credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create(MINIO.getUserName(), MINIO.getPassword())))
+        S3.start();
+        s3 = S3Client.builder().region(Region.AP_NORTHEAST_2)
+                .endpointOverride(URI.create("http://" + S3.getHost() + ":" + S3.getMappedPort(9090))).forcePathStyle(true)
+                .credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create("test", "test")))
                 .httpClient(UrlConnectionHttpClient.create()).build();
         s3.createBucket(b -> b.bucket("starindex-test"));
         store = new S3PackStore(s3, "starindex-test");
@@ -38,7 +39,7 @@ class S3PackStoreTest {
     @AfterAll
     static void stop() {
         if (s3 != null) s3.close();
-        MINIO.stop();
+        S3.stop();
     }
 
     @Test

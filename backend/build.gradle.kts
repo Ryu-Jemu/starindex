@@ -55,7 +55,6 @@ dependencies {
     testImplementation("org.springframework.boot:spring-boot-starter-batch-jdbc-test")
     testImplementation("org.springframework.boot:spring-boot-starter-webmvc-test")
     testImplementation("org.springframework.boot:spring-boot-starter-security-test")
-    testImplementation("org.testcontainers:testcontainers-minio")   // S3PackStore against an S3-compatible server
     testImplementation("org.springframework.boot:spring-boot-testcontainers")
     testImplementation("org.testcontainers:testcontainers-postgresql")
     // Pinned: Maven Central's "latest" is a 4.0.0 beta. Standalone jar shades Jetty (no clash with Boot's Jetty BOM).

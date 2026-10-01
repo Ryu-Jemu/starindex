@@ -1,6 +1,6 @@
 # 오늘 밤 별 지수: 스카이뷰 + 하늘색 변화 + Unity AR, 최소 비용 작업 계획 (rev4, 2026-09-29)
 
-> **2026-09-30·10-01 변경:** DB는 PostgreSQL 18이다(ADR-013). 운영 DB는 **Neon Free**(관리형 PostgreSQL 18, AWS ap-southeast-1 싱가포르, TLS, direct 엔드포인트)다(ADR-015, `docs/DB-PLAN.md` 11). ADR-014의 "앱 EC2에 직접 설치"를 대체하고, ADR-014의 보관 결정은 그대로 둔다. EC2에는 JVM과 Valkey만 돈다. 과제 시연에 RDS가 필요하면 M0 시연 기간에만 RDS for PostgreSQL 18을 쓰고, 시연 뒤 최종 스냅샷을 만들고 삭제한다. 전환은 `DB_URL`만 바꾼다(`docs/DB-PLAN.md` 11.9). 보관은 기본 2일이고 예외는 `docs/DB-PLAN.md` 2장을 따른다. ETL 사용법은 `docs/ETL.md`.
+> **2026-09-30·10-01 변경:** DB는 PostgreSQL 18이다(ADR-013). 운영 DB는 **Neon Free**(관리형 PostgreSQL 18, AWS ap-southeast-1 싱가포르, TLS, direct 엔드포인트)다(ADR-015, `docs/DB-PLAN.md` 11). ADR-014의 "앱 EC2에 직접 설치"를 대체하고, ADR-014의 보관 결정은 그대로 둔다. EC2에는 JVM과 Valkey만 돈다. **RDS는 시연에도 쓰지 않는다(ADR-016, 10-01 사용자 결정: DB는 Neon 무과금).** 다른 PostgreSQL 18로 옮길 일이 생기면 `DB_URL`만 바꾼다. 보관은 기본 2일이고 예외는 `docs/DB-PLAN.md` 2장을 따른다. ETL 사용법은 `docs/ETL.md`.
 
 
 ## Context
@@ -12,7 +12,7 @@
   - ③ 발표 MVP 먼저, 1인
   - ④ **시간에 따라 노을·해질녘 하늘색이 변하며 진행**
   - ⑤ **이미 가진 것(Apple Developer, iOS 26 이상 iPhone, AWS 계정)을 빼고 추가 비용 최소**
-  - ⑥ 고정 스택: GitHub Actions → S3 → CodeDeploy → EC2(Spring Boot, Redis, JWT, WebSocket, QueryDSL), RDS MySQL, Bootstrap (과제 원문. DB는 PostgreSQL 18로 바꿨고 운영은 Neon Free, 시연에 필요하면 M0 시연만 RDS 가능: ADR-013, ADR-015)
+  - ⑥ 고정 스택: GitHub Actions → S3 → CodeDeploy → EC2(Spring Boot, Redis, JWT, WebSocket, QueryDSL), RDS MySQL, Bootstrap (과제 원문. DB는 PostgreSQL 18로 바꿨고 운영·시연 모두 Neon Free, RDS 없음: ADR-013, ADR-015, ADR-016)
 - **저장소**: 이 저장소(`personal_project/`)
 - **검증 이력**
   - 조사 2회(7트랙과 비평가)
@@ -56,7 +56,7 @@
 | 무엇이 어디 있는지 | BSC5P 별, 88개 별자리 선과 한글명, 해·달(위상)·행성, 은하 적도와 중심, 라벨 컬링, 탭 상세, 검색 안내(R1) | T8, T10 |
 | **하늘색 진행** | 태양 기하 고도 팔레트 + 픽셀 셰이더(낮 → 골든아워 → 노을 → 블루아워 → 박명 → 밤), 태양 쪽 글로우, 실시간 진행, 재생, **해질녘 재생(약 20초)**, 박명에 따라 별이 나타남(m_tw), 흐림 탈채도 | T14~T18, G5 |
 | Unity AR | 6.3 LTS + AR Foundation·ARKit XR 6.3(GravityAndHeading), UaaL, AR 연출 3종 | G-E, G-U, T-U1 |
-| 최소 비용 | 로컬 우선 개발, CloudFront 기본 도메인, NAT·ALB·ElastiCache·도메인 미사용, 필요할 때만 RDS, Linux CI | **월별 `docs/cost-log.md` 실측 ≤ 3.6 추정의 120%**, Budgets |
+| 최소 비용 | 로컬 우선 개발, CloudFront 기본 도메인, NAT·ALB·ElastiCache·도메인·RDS 미사용(DB는 Neon Free), Linux CI | **월별 `docs/cost-log.md` 실측 ≤ 3.6 추정의 120%**, Budgets |
 | 출시 | 위치 거부·해외·실내·낮·EC2 정지에서도 동작, privacy manifest, 개인정보처리방침(앱 안과 메타데이터) | G7, G8 |
 
 ## 2. 핵심 설계 결정
@@ -254,7 +254,7 @@ docs/       adr/, ATTRIBUTION.md, review-notes.md, verification/, demo-script.md
 ### 3.6 비용 최소화 (서울, 부가세 10% 별도)
 **원칙**
 1. 개발은 로컬 docker-compose로 한다.
-2. AWS는 필요한 기간에만 쓴다. EC2는 W3부터 24/7로 켠다. DB(PostgreSQL 18)는 Neon Free(0 USD)에 둔다(ADR-015). **RDS는 과제 시연에 필요할 때만 M0 시연 기간(W3)에** 쓰고, 이후 최종 스냅샷을 만들고 삭제한다.
+2. AWS는 필요한 기간에만 쓴다. EC2는 W3부터 24/7로 켠다. DB(PostgreSQL 18)는 Neon Free(0 USD)에 둔다(ADR-015). **RDS는 시연에도 쓰지 않는다(ADR-016).**
 3. 도메인, 인증서, NAT, ALB, ElastiCache, WAF는 쓰지 않는다.
 4. 앱 데이터는 S3 정적 팩이다.
 5. 측정 장비(삼각대, 수평계 앱)는 보유품이나 대여로 해결한다(0원).
@@ -264,7 +264,7 @@ docs/       adr/, ATTRIBUTION.md, review-notes.md, verification/, demo-script.md
 | EC2 | t4g.small(2GB) 1대만, **CPU 크레딧 standard**, gp3 20GB, 스왑 2GB, `-Xmx512m -XX:+UseSerialGC`(Metaspace 192m, code cache 64m, direct 64m), Valkey 128MB. JVM과 Valkey만 돌린다(DB 서버 없음, `deploy/ec2/install.sh`는 PostgreSQL 18 클라이언트와 Valkey만 설치) | **T4g 무료 체험 2026-12-31까지** [확실]. Unlimited 모드는 초과 과금. 리허설 실측(`scripts/ec2sim.sh`, 10-01, DB 제외 구성): 서버 JVM 306MiB, valkey 19MiB, OS·에이전트 270MiB 포함 1,600MiB 중 595MiB, 대기 중 DB 연결 0. **t4g.micro 전환이 다시 가능하다**(조건: `-Xmx384m`, Valkey `maxmemory 64mb`, 실제 EC2에서 7일간 MemAvailable ≥250MiB와 스왑 ≈0). 12월에 정한다(ADR-015) |
 | DB | **Neon Free**(PostgreSQL 18, ap-southeast-1, TLS, direct 엔드포인트, `-pooler` 아님). 컴퓨트 크기는 Free에서 고정(primary 0.25~2 CU 자동 확장, 10-01 확인). Hikari `minimum-idle 0`, `idle-timeout 60000`, `keepalive-time 0`, 최대 풀 5. 최초 1회 `deploy/postgres/bootstrap-db.sh`(neondb_owner)로 `starindex` 역할(superuser·CREATEDB 없음)과 DB를 만든다 | 프로젝트당 0.5GB(넘으면 쓰기 실패), 월 100 CU-시간(넘으면 다음 달까지 정지), 5분 무쿼리 시 0으로 축소, 월 egress 5GB, 즉시 복원 6시간, 브랜치 10개 [확실, neon.com 문서 2026-10-01]. 예상 하루 약 10회 짧게 깨어나 월 약 12 CU-시간 [추정]. 2 CU면 8배다. HikariCP 7 기본값은 유휴 연결을 2분마다 확인해 Neon을 깨워 둔다(월 약 180 CU-시간). 실측: 마지막 쿼리 약 100초 뒤 DB 연결 0(ADR-015, DB-PLAN 11) |
 | 네트워크 | 기본 VPC 퍼블릭 서브넷, EIP 1개, SG는 CloudFront prefix list만 허용, SSM으로 접속 | **NAT를 쓰면 월 43 USD 이상 추가** [확실]. IPv4 월 3.65(정지 중에도 과금) [확실] |
-| RDS | **과제 시연에 필요할 때만, M0 시연 기간만**. db.t4g.micro **PostgreSQL 18**, Single-AZ, gp3 20GB, 퍼블릭 액세스 off, PI off | 정지해도 7일 뒤 자동 시작 [확실] → 시연 뒤 **최종 스냅샷을 만들고 삭제**. 이후 Neon으로 되돌린다(`DB_URL`만 교체, DB-PLAN 11.9, ADR-015) |
+| RDS | **쓰지 않는다**(ADR-016, 10-01 사용자 결정). 과제 스택의 "RDS" 자리는 Neon Free PostgreSQL 18이 맡는다 | 평가가 RDS 인스턴스를 요구하면 감점 위험 [불확실]. 옮길 때는 `DB_URL`만 바꾼다 |
 | CloudFront | PAYG + 기본 도메인 | 월 1TB·1천만 요청 무료 [확실] |
 | 기타 | SSM Standard, CloudWatch 알람 3개, Budgets, Scheduler(월 1,400만 호출 무료), Unity Personal, APNs, data.go.kr, GitHub private + Linux | 0원 |
 
@@ -272,8 +272,8 @@ docs/       adr/, ATTRIBUTION.md, review-notes.md, verification/, demo-script.md
 
 | 기간 | AWS 가동 | 금액 |
 |---|---|---|
-| M0(~10/19) | W3부터 약 10일(EC2 무료, Neon Free 0, 시연에 RDS를 쓰면 약 216h ≈ 5.4, 스토리지·EIP·EBS 약 2.5) | **약 8~12 USD**(RDS를 쓸 때. 2주 켜면 14~17, RDS를 안 쓰면 그만큼 준다) |
-| R1~R2(약 6~9주) | EC2 24/7 + Neon Free 0 + EIP·IPv4 3.65 + EBS + S3, **RDS를 썼다면 M0 뒤 스냅샷 만들고 삭제**(EC2 무료 체험 2026-12-31까지) | **월 약 6**(추정, ADR-015) |
+| M0(~10/19) | W3부터 약 10일(EC2 무료, Neon Free 0, RDS 없음, 스토리지·EIP·EBS 약 2.5) | **약 3~6 USD**(추정, ADR-016) |
+| R1~R2(약 6~9주) | EC2 24/7 + Neon Free 0 + EIP·IPv4 3.65 + EBS + S3, RDS 없음(EC2 무료 체험 2026-12-31까지) | **월 약 6**(추정, ADR-015) |
 | R3~2026-12-31 | EC2 24/7 + Neon Free 0, RDS 없음 | **월 약 6**(추정, ADR-015) |
 | 2027-01~ | 심사·운영 24/7, EC2 t4g.small + EBS + IPv4, Neon Free 0, RDS 없음 | **월 약 21**(t4g.micro 조건 통과 시 월 약 13, 추정, ADR-015) |
 | 2027 선택 G-C1 | Scheduler로 16:30 EC2 시작 → 01:30 EC2 정지(DB는 Neon이라 EC2와 따로 돈다)<br>Spring은 `hikari.initialization-fail-timeout=-1`, systemd `Restart=on-failure`<br>Scheduler 역할에는 `ec2:Start/StopInstances`만 준다<br>정지 시간대에는 알람 ②·③을 `DisableAlarmActions`하거나 `TreatMissingData=notBreaching`으로 둔다 | 금액은 RDS 제외로 재산정 필요(이전 20/18은 RDS 포함). **심사 기간에는 쓰지 않음** |
@@ -285,7 +285,7 @@ docs/       adr/, ATTRIBUTION.md, review-notes.md, verification/, demo-script.md
 - **비용 체크리스트**(W3 완료 기준에 포함)
   - `aws ec2 describe-instance-credit-specifications` = standard
   - Neon direct 엔드포인트·TLS, 첫 주 콘솔 CU-시간 확인(primary 컴퓨트 0.25~2 CU, ADR-015)
-  - RDS(M0 시연에 쓸 때만) PostgreSQL 18, Single-AZ, PI off, 퍼블릭 off. 시연 뒤 최종 스냅샷과 삭제 확인
+  - RDS 인스턴스 0개(ADR-016)
   - NAT 0, EIP 1
   - `cost-log.md` 첫 기록
 - **2027 선택**: (폐지) RDS 1년 예약 검토는 하지 않는다. M0 뒤 RDS를 쓰지 않는다(ADR-014).
@@ -433,7 +433,7 @@ docs/       adr/, ATTRIBUTION.md, review-notes.md, verification/, demo-script.md
 |---|---|---|
 | W1 | 사용자 조치 0.5 · git/번들 ID/ADR-004 0.5 · catalog-builder(한글명은 d3 `ko`를 잠정 사용하고 R1에서 검수) 1.0 · SkyCore 계산(C 벤더링, AstroEngine, R, 굴절, Ephemeris, RiseSet, Projector, AzimuthCorrection, FrameTransform, DeclinationTable) 2.5 · 하늘 모듈(SkyPhase, m_tw, SkyPalette, SkyColorModel, SunsetPlaybackPlanner) 1.5 · G1a 테스트 1.0 | **7.0** |
 | W2 | SkySensors 1.5 · SkyScreen MVP 2.5 · 셰이더와 해질녘 재생 버튼 1.0 · 실기기 스모크 0.5 · Boot 골격 1.0 · 수집 Job 2개(로컬, 교차검증 Step은 R3) 1.5 | **8.0** |
-| W3 | 발행 Job 1.5 · 앱 팩 클라이언트와 IndexChip 1.5 · AWS 일괄(EC2, Neon(RDS는 시연에 필요할 때만), S3, CloudFront, CodeDeploy, OIDC, 필터, 알람 1개) 2.5 · 관리자(JWT, 실행 이력, SSM) 1.0 · 24시간 무인 운영과 리허설 1.0 | **7.5** |
+| W3 | 발행 Job 1.5 · 앱 팩 클라이언트와 IndexChip 1.5 · AWS 일괄(EC2, Neon, S3, CloudFront, CodeDeploy, OIDC, 필터, 알람 1개) 2.5 · 관리자(JWT, 실행 이력, SSM) 1.0 · 24시간 무인 운영과 리허설 1.0 | **7.5** |
 | 합계 | | **약 22.5**(가용 평일 12일 + 주말·휴일 8일 = 최대 20) |
 
 - **해석**: 발표가 10/20이면 주말을 모두 써도 약 2.5인일이 부족하다(추정). 그래서 둘 중 하나를 택한다.
@@ -455,7 +455,7 @@ docs/       adr/, ATTRIBUTION.md, review-notes.md, verification/, demo-script.md
 |---|---|---|
 | W1 (9/30~10/4) | **사용자 조치(8장)**. 천문연 출몰 API로 과거 locdate 1콜이 되는지 확인<br>`git init`과 private 저장소, 번들 ID, ADR-004<br>`catalog-builder` → `skypack.bin` v1(≤5.5등), T9 QA<br>SkyCore 계산과 하늘 모듈(인일표의 목록)<br>docker-compose<br>**G-E1(디스크) 판정 뒤** Unity 6.3을 배경으로 설치한다. E3/E4 판정은 R2에서 한다 | **G0**, **G1a** |
 | W2 (10/5~10/11) | SkySensors와 `SkyScreen` MVP(별·선·한글명·해달행성·HUD·라벨·탭·드래그 수동 모드)<br>**하늘 셰이더, 해질녘 재생 버튼, m_tw, 단계별 선·라벨 알파**<br>G3 스모크, T-P1·T-P5 실기기 스모크<br>Boot 4.1 골격(더미 Job을 실행하면 `BATCH_JOB_EXECUTION` 행 생성, QueryDSL 7.x Q타입 빌드)과 `forecastIngestJob`·`astroDailyJob`(**로컬**) | ① 실기기 해질녘 재생 1회(자세한 기준은 표 아래)<br>② **G3 스모크 결과 기록**(갱신 도착 여부, `CMErrorTrueNorthNotAvailable` 여부). 실패하면 cmMagnetic 폴백으로 회전 추적 시연을 확인<br>③ T-P1·T-P5 실기기 통과<br>④ 로컬 ETL 1회 성공 |
-| W3 (10/12~10/19) | `starIndexPublishJob`(17개 시·도, 72시간 SKY/PTY, kasi 시각), 앱 `IndexChip`<br>AWS 일괄(Neon 프로젝트와 `bootstrap-db.sh`, **RDS는 시연에 필요할 때만 W3 첫날 생성**)<br>관리자(JWT, 실행 이력, SSM 터널)<br>배포 동결 → 24시간 무인 운영 → 리허설 | ① CloudFront `/api/health` UP, `/ws/v1/live` 101<br>② `/backup/…`·`/deploy/…`로 S3 객체를 받을 수 없음(EC2 필터 403). 버킷 정책은 CLI 비인가 GetObject 거부로 따로 확인<br>③ **T19 통과**(발행 뒤 5분 안에 실기기 manifest 갱신)<br>④ **배포 후 연속 24시간(발표 8회) 무인 수집·발행 성공**<br>⑤ 3.6 비용 체크리스트 통과<br>⑥ RDS를 썼다면 시연 뒤 Neon으로 전환(`DB_URL`만 교체, DB-PLAN 11.9)하고 RDS는 **최종 스냅샷을 만들고 삭제**(ADR-015) |
+| W3 (10/12~10/19) | `starIndexPublishJob`(17개 시·도, 72시간 SKY/PTY, kasi 시각), 앱 `IndexChip`<br>AWS 일괄(`scripts/aws-provision.sh`, Neon 프로젝트와 `bootstrap-db.sh`, RDS 없음: ADR-016)<br>관리자(JWT, 실행 이력, SSM 터널)<br>배포 동결 → 24시간 무인 운영 → 리허설 | ① CloudFront `/api/health` UP, `/ws/v1/live` 101<br>② `/backup/…`·`/deploy/…`로 S3 객체를 받을 수 없음(EC2 필터 403). 버킷 정책은 CLI 비인가 GetObject 거부로 따로 확인<br>③ **T19 통과**(발행 뒤 5분 안에 실기기 manifest 갱신)<br>④ **배포 후 연속 24시간(발표 8회) 무인 수집·발행 성공**<br>⑤ 3.6 비용 체크리스트 통과<br>⑥ RDS 인스턴스 0개 확인(ADR-016) |
 
 W2 해질녘 재생 합격 기준
 - 알파가 0보다 큰 별은 m<m_lim인 별뿐이다.
@@ -616,7 +616,7 @@ W2 해질녘 재생 합격 기준
 | 나침반 오차, 축 부호 오류 | 배지, 프레임별 누적 보정, 수동 모드, R 열 구성, T7, G2 |
 | 대략적 위치에서 진북 프레임 불가 | W2 G3 스모크, magnetic 폴백을 W2 범위에 포함 |
 | Unity 환경·일정·메모리 | R2 Go/No-Go, 사용자 재결정, `AR_UNITY` OFF 빌드 유지 |
-| **비용 함정** | RDS는 M0 시연에 쓸 때만 쓰고 최종 스냅샷 뒤 삭제(정지 7일 뒤 자동 시작), Neon은 Hikari 유휴 연결 0과 첫 주 CU-시간 확인(ADR-015), NAT 미사용, standard 크레딧, Free plan은 W1에 Paid 전환, macOS CI 미사용, Budgets, cost-log |
+| **비용 함정** | RDS 미사용(ADR-016), Neon은 Hikari 유휴 연결 0과 첫 주 CU-시간 확인(ADR-015), NAT 미사용, standard 크레딧, Free plan은 W1에 Paid 전환, macOS CI 미사용, Budgets, cost-log |
 | Neon Free 운영 | Neon은 중단 없는 가용성이 필요한 운영에는 Free를 피하라고 한다 [확실]. Free의 상업적 사용 허용 여부는 [불확실]. 서울→싱가포르 지연은 미측정(배치만 DB를 쓴다). CU-시간·egress를 넘으면 다음 달까지 DB가 정지한다. 이때 S3/CloudFront 팩으로 앱은 동작하고 다음 발표만 수집되지 않는다. 폴백은 EC2 PostgreSQL(ADR-014, 스크립트는 git `db5aeb4`/`78c8ffa`)이나 RDS, 모두 `DB_URL`만 바꾼다(ADR-015, DB-PLAN 11) |
 | 팩 전파 지연 | manifest TTL 60초, 불변 버전 경로, 롤백 시 무효화, T19 |
 | 관리자 자격증명 노출 | 공개 경로 차단, SSM 터널, 로그인 실패 잠금 |

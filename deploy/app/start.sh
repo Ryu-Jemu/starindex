@@ -14,5 +14,15 @@ if ! DATA_GO_KR_SERVICE_KEY="$(ssm /starindex/data-go-kr/service-key 2>/dev/null
 fi
 export DATA_GO_KR_SERVICE_KEY
 
+# W3 secrets (PLAN 3.4/D11): the CloudFront origin header, and the admin login. Each may be missing on a fresh stack;
+# the app then degrades safely (no CloudFront traffic accepted / admin login disabled / a per-process JWT key).
+optional() {  # optional <ssm name> <env var> <consequence>
+  local v
+  if v="$(ssm "$1" 2>/dev/null)"; then export "$2=$v"; else echo "warning: $1 not readable; $3" >&2; export "$2="; fi
+}
+optional /starindex/cloudfront/origin-verify ORIGIN_VERIFY_SECRET "requests through CloudFront will get 403"
+optional /starindex/admin/password-hash ADMIN_PASSWORD_HASH "admin login is disabled"
+optional /starindex/admin/jwt-secret ADMIN_JWT_SECRET "admin tokens use a per-process key"
+
 # shellcheck disable=SC2086  # JAVA_OPTS is a list of JVM flags
 exec java ${JAVA_OPTS:-} -jar /opt/starindex/app.jar

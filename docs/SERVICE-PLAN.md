@@ -773,7 +773,7 @@ StarIndex (최소 iOS 26.1, ADR-011)
 | Redis(Valkey) | 쿼터, manifest 캐시, WS Pub/Sub, Job 락, 진행률 |
 | JWT | 관리자 로그인, WS 티켓 |
 | WebSocket | `/ws/admin` 진행률(주 시연), `/ws/v1/live` 새 팩 배너(선택 기능) |
-| PostgreSQL 18(Neon Free 관리형, 시연에 RDS가 필요하면 그 기간만 RDS, DB_URL만 바꾼다, ADR-015) | 예보, 채점, 명소, 발행 이력 |
+| PostgreSQL 18(Neon Free 관리형, RDS 없음, ADR-015·016) | 예보, 채점, 명소, 발행 이력 |
 | **Bootstrap** | 관리자 화면. 그리고 **공개 정적 페이지 '오늘 밤 전국 지수'**: `publicPageStep`이 Thymeleaf + Bootstrap으로 렌더해 S3 → CloudFront 기본 도메인에 올린다. 위치 입력 없이 17개 시·도 표, 발표 시각, 적중률 요약을 보여 준다. **Support URL과 Marketing URL, 개인정보처리방침 URL을 겸한다.** 정적 파일이라 EC2를 꺼도 떠 있다 |
 
 ### 8.7 과제 종료 후 운영 모드(ADR-012)
@@ -857,7 +857,7 @@ StarIndex (최소 iOS 26.1, ADR-011)
 | 단계 | 기간 | 가용 평일 | 계획 인일 |
 |---|---|---|---|
 | M0 | 9/30–10/19 | 11(동결 전) + 주말 버퍼 | 확정 10.0 + 조건부 3.0 |
-| 정리·회고 | 10/20–10/23 | 4 | 계획 밖 버퍼(시연에 RDS를 썼다면 최종 스냅샷 뒤 삭제, DB-PLAN C2~C8, 문서) |
+| 정리·회고 | 10/20–10/23 | 4 | 계획 밖 버퍼(DB-PLAN C2~C8, 문서) |
 | R0 | 10/26–10/30 | 5 | 5 |
 | R1 | 11/2–12/14 | 31 | 30.5 |
 | R2 | 12/15–12/24 | 8 | 8(Go) / 7.5(①) / 0(③) |

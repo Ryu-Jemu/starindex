@@ -3,7 +3,7 @@
 - 상태: 채택 (2026-10-01, 사용자 결정)
 - 대체: ADR-014의 "DB 위치"(앱 EC2에 PostgreSQL 18 직접 설치)와 그에 딸린 운영 절차(DB-PLAN 5장)
 - 유지: ADR-014의 저장·보관 결정(필요한 것만 저장, 2일 보관과 예외 4가지, `kma_forecast_hour`, S3 원문·collect-only 폐기, 적중률 스냅숏 C9)
-- 관련: ADR-013(PostgreSQL 18), `docs/DB-PLAN.md` 11장(세부와 검증)
+- 관련: ADR-013(PostgreSQL 18), ADR-016(RDS 미사용), `docs/DB-PLAN.md` 11장(세부와 검증)
 
 ## 배경
 
@@ -37,7 +37,7 @@
 5. 복구 방법
    - 6시간 안이면 Neon 즉시 복원을 쓴다.
    - 그보다 오래됐으면 `restore.sh`로 운영 DB 옆의 새 DB에 복원하고, 확인한 뒤 `--switch`로 바꾼다. 운영 DB를 지우는 경로는 없다.
-6. RDS 호환은 유지한다. Neon, RDS, 다른 PostgreSQL 18 사이의 이동은 `DB_URL`만 바꾼다. 과제 시연에 "RDS"가 필요하면 그 기간에만 RDS를 쓴다.
+6. RDS 호환은 유지한다. Neon, RDS, 다른 PostgreSQL 18 사이의 이동은 `DB_URL`만 바꾼다. ~~과제 시연에 "RDS"가 필요하면 그 기간에만 RDS를 쓴다.~~ → ADR-016(10-01): RDS는 시연에도 쓰지 않는다.
 7. EC2(t4g.small, AL2023)에는 JVM과 Valkey만 돌린다.
    - `deploy/ec2/install.sh`는 PostgreSQL 18 클라이언트와 Valkey만 설치한다.
    - DB가 빠지면서 t4g.micro를 다시 검토할 수 있다. 무료 체험이 끝나는 12월에 실측으로 판단한다(DB-PLAN 11.6).

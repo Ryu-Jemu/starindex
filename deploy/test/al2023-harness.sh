@@ -3,7 +3,7 @@
 # Neon stand-in (ADR-015). Only systemctl (no systemd in a container) and aws (no AWS) are replaced by local stand-ins.
 # The stand-in is a PostgreSQL 18 server reached as ep-standin.ap-southeast-1.aws.neon.tech that, like Neon, accepts
 # TLS only (SCRAM, channel binding) and has no usable superuser: the admin neondb_owner is CREATEDB CREATEROLE only.
-# /work = deploy/, scripts/, app.jar.
+# /work = deploy/, scripts/, app.jar, bundle/ (the CodeDeploy revision).
 set -uo pipefail
 R=/work; pass=0; fail=0
 ok()  { echo "PASS $*"; pass=$((pass+1)); }
@@ -117,7 +117,8 @@ python3 $R/scripts/ec2sim_stub.py 18089 & sleep 1
 cp /work/app.jar /opt/starindex/app.jar
 appenv() { grep -E '^[A-Z_]+=' /etc/starindex/app.env | sed 's/^\([A-Z_]*\)=\(.*\)$/export \1="\2"/'; }
 run_app() {  # emulates systemd: EnvironmentFile, User=starindex, ExecStart=start.sh
-  runuser -u starindex -- env -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/var/lib/starindex bash -c "$(appenv); export $*; cd /opt/starindex && /opt/starindex/start.sh"
+  # Packs stay local and no CloudWatch here: S3_BUCKET in app.env is for backup.sh's stand-in bucket only.
+  runuser -u starindex -- env -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/var/lib/starindex bash -c "$(appenv); export S3_BUCKET= METRICS_ENABLED=false; export $*; cd /opt/starindex && /opt/starindex/start.sh"
 }
 run_app STARINDEX_DATAGOKR_BASEURL=http://127.0.0.1:18089 SPRING_MAIN_WEBAPPLICATIONTYPE=none \
   SPRING_BATCH_JOB_ENABLED=true SPRING_BATCH_JOB_NAME=forecastPipelineJob LOGGING_LEVEL_ROOT=WARN > /tmp/app1.log 2>&1
@@ -146,7 +147,7 @@ today="$(TZ=Asia/Seoul date +%Y%m%d)"; today_iso="$(TZ=Asia/Seoul date +%F)"
 java_job() {  # java_job <db> <packdir> <args…>: the app as starindex with app.env, like start.sh but with job arguments
   local db="$1" packs="$2"; shift 2
   runuser -u starindex -- env -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/var/lib/starindex bash -c "$(appenv); \
-    export DB_URL=\$(echo \"\$DB_URL\" | sed -E 's#(neon.tech/)[a-z0-9_]+#\\1$db#') PACK_LOCAL_DIR=$packs DATA_GO_KR_SERVICE_KEY=ec2sim-not-a-real-key; \
+    export DB_URL=\$(echo \"\$DB_URL\" | sed -E 's#(neon.tech/)[a-z0-9_]+#\\1$db#') PACK_LOCAL_DIR=$packs DATA_GO_KR_SERVICE_KEY=ec2sim-not-a-real-key S3_BUCKET= METRICS_ENABLED=false; \
     export DB_PASSWORD=\$(aws ssm get-parameter --with-decryption --name /starindex/db/password --query Parameter.Value --output text); \
     cd /opt/starindex && exec java \$JAVA_OPTS -jar app.jar --spring.main.web-application-type=none --spring.batch.job.enabled=true \
     --starindex.data-go-kr.base-url=http://127.0.0.1:18089 --logging.level.root=WARN --logging.level.ETL=INFO run.at=\$(date +%s%N) $*"
@@ -223,8 +224,53 @@ check "restore fills the empty live database" bash -c "$RESTORE latest starindex
 check "filled live database has the data" test "$(runuser -u postgres -- psql -d starindex_fresh -tAc 'SELECT count(*) FROM region')" = 17
 check "second fill refused (no longer empty)" bash -c "! $RESTORE latest starindex_fresh >/dev/null 2>&1"
 
+echo "== CodeDeploy hooks (bundle from scripts/build-bundle.sh, run from the revision like the agent does)"
+B=/opt/starindex/bundle
+hook() { bash "$R/bundle/deploy/codedeploy/$1.sh"; }
+check "bundle: appspec at the root, jar, hook scripts" test -f $R/bundle/appspec.yml -a -f $R/bundle/app.jar -a -f $R/bundle/deploy/codedeploy/validate.sh
+check "bundle: no test harness or IaC inside" test ! -e $R/bundle/deploy/test -a ! -e $R/bundle/deploy/aws
+cat > /etc/starindex/stack.env <<STACK
+DB_URL=jdbc:postgresql://$HOST/starindex_pending?sslmode=require&channelBinding=require
+S3_BUCKET=starindex-test
+CLOUDFRONT_DISTRIBUTION_ID=E2TESTDIST
+CLOUDFRONT_DOMAIN=d111111abcdef8.cloudfront.net
+AWS_REGION=ap-northeast-2
+UNKNOWN_KEY=must-not-appear
+STACK
+mv /etc/starindex/app.env /etc/starindex/app.env.before-hooks
+check "BeforeInstall" hook before-install
+cp -R $R/bundle/. $B/   # the agent's Install step (files: / → /opt/starindex/bundle)
+check "AfterInstall (first deployment: app.env from the example)" bash -c "bash $R/bundle/deploy/codedeploy/after-install.sh > /tmp/hook-ai1.log 2>&1" || tail -20 /tmp/hook-ai1.log
+check "app.env created, root:starindex 0640" test "$(stat -c %U:%G:%a /etc/starindex/app.env)" = root:starindex:640
+check "stack.env DB_URL copied verbatim (& and ? kept)" grep -qx "DB_URL=jdbc:postgresql://$HOST/starindex_pending?sslmode=require&channelBinding=require" /etc/starindex/app.env
+check "stack.env CLOUDFRONT_DOMAIN set once" test "$(grep -c '^CLOUDFRONT_DOMAIN=d111111abcdef8.cloudfront.net$' /etc/starindex/app.env)" = 1
+check "unknown stack.env key ignored" bash -c '! grep -q UNKNOWN_KEY /etc/starindex/app.env'
+check "example defaults kept (metrics on, schedule on)" bash -c 'grep -qx METRICS_ENABLED=true /etc/starindex/app.env && grep -qx ETL_SCHEDULE_ENABLED=true /etc/starindex/app.env'
+check "jar installed from the bundle" test "$(sha256sum < $B/app.jar)" = "$(sha256sum < /opt/starindex/app.jar)"
+restarts0=$(grep -c "restart starindex" /tmp/systemctl.log)
+check "ApplicationStart before bootstrap → not started, pending" bash -c "bash $R/bundle/deploy/codedeploy/application-start.sh > /tmp/hook-as1.log 2>&1 && grep -q 'NOT started' /tmp/hook-as1.log && test -f /var/lib/starindex/deploy-pending"
+check "pending start did not (re)start the app" test "$(grep -c "restart starindex" /tmp/systemctl.log)" = "$restarts0"
+check "ValidateService passes a pending deployment with instructions" bash -c "bash $R/bundle/deploy/codedeploy/validate.sh | grep -q bootstrap-db.sh"
+
+echo "== CodeDeploy hooks: second deployment against the bootstrapped database"
+sed -i "s#^DB_URL=.*#DB_URL=jdbc:postgresql://$HOST/starindex_fresh?sslmode=require\&channelBinding=require#" /etc/starindex/stack.env
+sed -i 's/^ETL_SCHEDULE_ENABLED=true/ETL_SCHEDULE_ENABLED=false/; s#/var/log/starindex/gc.log#/tmp/gc-%p.log#' /etc/starindex/app.env
+check "ApplicationStop" hook application-stop
+check "BeforeInstall again" hook before-install
+cp -R $R/bundle/. $B/
+check "AfterInstall again keeps operator edits" bash -c "bash $R/bundle/deploy/codedeploy/after-install.sh > /tmp/hook-ai2.log 2>&1 && grep -qx ETL_SCHEDULE_ENABLED=false /etc/starindex/app.env"
+check "DB_URL follows stack.env" grep -qx "DB_URL=jdbc:postgresql://$HOST/starindex_fresh?sslmode=require&channelBinding=require" /etc/starindex/app.env
+check "ApplicationStart → enable + restart, pending cleared" bash -c "bash $R/bundle/deploy/codedeploy/application-start.sh > /tmp/hook-as2.log 2>&1 && test ! -f /var/lib/starindex/deploy-pending && tail -2 /tmp/systemctl.log | grep -q 'restart starindex'"
+run_app > /tmp/server2.log 2>&1 &   # what systemd would start
+check "ValidateService: both ports healthy" bash -c "VALIDATE_TIMEOUT=150 bash $R/bundle/deploy/codedeploy/validate.sh > /tmp/hook-v2.log 2>&1" || tail -5 /tmp/hook-v2.log
+check "loopback (SSM tunnel) serves the admin page" bash -c "curl -fsS http://127.0.0.1:8080/admin/index.html | grep -q bootstrap.min.css"
+check "origin secret from SSM: CloudFront header with the wrong value → 403" test "$(curl -s -o /dev/null -w '%{http_code}' -H 'X-Origin-Verify: wrong' http://127.0.0.1:8080/api/health)" = 403
+pkill -f "app.jar"; sleep 3
+check "ValidateService fails when the app is down" bash -c "! VALIDATE_TIMEOUT=6 bash $R/bundle/deploy/codedeploy/validate.sh >/dev/null 2>&1"
+check "no secret in hook logs" bash -c "! grep -rqF -e \"\$(cat /fake/ssm/starindex/db/password)\" /tmp/hook-ai1.log /tmp/hook-ai2.log /tmp/hook-as1.log /tmp/hook-as2.log"
+
 if [ "$fail" != 0 ]; then
-  for f in /tmp/install1.log /tmp/install2.log /tmp/bootstrap1.log /tmp/app1.log /tmp/app2a.log /tmp/server.log /tmp/app2.log /tmp/restore1.log /tmp/app3.log /tmp/restore2.log /tmp/neon.log; do
+  for f in /tmp/install1.log /tmp/install2.log /tmp/bootstrap1.log /tmp/app1.log /tmp/app2a.log /tmp/server.log /tmp/app2.log /tmp/restore1.log /tmp/app3.log /tmp/restore2.log /tmp/hook-ai1.log /tmp/hook-as1.log /tmp/hook-ai2.log /tmp/hook-as2.log /tmp/hook-v2.log /tmp/server2.log /tmp/neon.log; do
     [ -f "$f" ] && { echo "--- $f"; grep -v '^\s*at ' "$f" | tail -15; }
   done
 fi

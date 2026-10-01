@@ -861,7 +861,7 @@ M0 동결 전 평일 여유는 약 2일입니다(SERVICE-PLAN 7.1). 그래서 **
   - 이 Mac → 싱가포르 쿼리 왕복은 74ms였다. EC2(서울)에서는 첫 주에 다시 잰다.
 - 되돌리기: EC2 직접 설치(ADR-014) 또는 RDS. 둘 다 `DB_URL`만 바꾼다.
 
-### 11.9 RDS → Neon 전환 (시연에 RDS를 쓴 경우)
+### 11.9 RDS → Neon 전환 (폐지: ADR-016으로 RDS를 쓰지 않는다. 다른 PostgreSQL에서 옮겨 올 때의 절차로만 남긴다)
 
 1. 시연이 끝나면 스케줄 실행이 없는 시간에 `sudo systemctl stop starindex`
 2. RDS에서 마지막 덤프: `sudo -u starindex /opt/starindex/postgres/backup.sh`(이때 `DB_URL`은 아직 RDS)
