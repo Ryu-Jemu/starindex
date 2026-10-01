@@ -63,8 +63,8 @@ public class IndexService {
                     if (v == null || v.get("SKY") == null || v.get("PTY") == null) continue;
                     int sky = (int) Math.round(v.get("SKY")), pty = (int) Math.round(v.get("PTY"));
                     if (sky != 1 && sky != 3 && sky != 4) continue;
-                    var moon = AstroCalculator.moon(h, r.getLat(), r.getLon(), 0);
-                    dark.add(new StarIndexCalculator.HourInput(h, sky, pty, moon.illuminatedFraction(), moon.altitudeDeg(), lightFactor));
+                    double fMoon = AstroCalculator.moonFactorOverHour(h, r.getLat(), r.getLon());
+                    dark.add(new StarIndexCalculator.HourInput(h, sky, pty, fMoon, lightFactor));
                 }
             }
             var score = StarIndexCalculator.night(dark);

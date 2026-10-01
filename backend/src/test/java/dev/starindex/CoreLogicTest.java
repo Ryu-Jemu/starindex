@@ -95,7 +95,7 @@ class CoreLogicTest {
         Instant t0 = kst("2026-10-12T20:00");
         List<HourInput> hours = new ArrayList<>();
         int[] sky = {4, 3, 1, 1, 3, 4};
-        for (int i = 0; i < sky.length; i++) hours.add(new HourInput(t0.plusSeconds(3600L * i), sky[i], 0, 0.1, -5, 1.0));
+        for (int i = 0; i < sky.length; i++) hours.add(new HourInput(t0.plusSeconds(3600L * i), sky[i], 0, 1.0, 1.0));
         var night = StarIndexCalculator.night(hours);
         assertNotNull(night);
         assertEquals(100, night.score());
@@ -110,17 +110,60 @@ class CoreLogicTest {
     void precipitationAndPartialFactorsProduceContributions() {
         Instant t0 = kst("2026-10-12T21:00");
         var rainy = StarIndexCalculator.night(List.of(
-                new HourInput(t0, 4, 1, 0, -5, 1), new HourInput(t0.plusSeconds(3600), 4, 1, 0, -5, 1)));
+                new HourInput(t0, 4, 1, 1, 1), new HourInput(t0.plusSeconds(3600), 4, 1, 1, 1)));
         assertEquals(0, rainy.score());
         assertEquals(1.0, rainy.contributions().get("precip"));
         assertTrue(rainy.reasons().contains("PRECIP"));
 
         var mixed = StarIndexCalculator.night(List.of(
-                new HourInput(t0, 3, 0, 0.9, 40, 0.8), new HourInput(t0.plusSeconds(3600), 3, 0, 0.9, 45, 0.8)));
+                new HourInput(t0, 3, 0, StarIndexCalculator.moonFactor(0.9, 40), 0.8),
+                new HourInput(t0.plusSeconds(3600), 3, 0, StarIndexCalculator.moonFactor(0.9, 45), 0.8)));
         double sum = mixed.contributions().values().stream().mapToDouble(Double::doubleValue).sum();
         assertEquals(1.0, sum, 0.01);
         assertTrue(mixed.contributions().get("cloud") > mixed.contributions().get("light"));
         assertNull(StarIndexCalculator.night(List.of()));
+    }
+
+    @Test
+    void theMoonCountsForThePartOfTheHourItIsUp() {
+        // 2026-10-01 Seoul: a 73% moon rises about 20:53. Evaluated only at 20:00 and 21:00 (altitude ≈ +0.6°) the
+        // clear 20–22 window looked moonless; averaged over each hour it is "some moonlight" (ADR-019).
+        double lat = 37.5665, lon = 126.978;
+        Instant h20 = kst("2026-10-01T20:00"), h21 = kst("2026-10-01T21:00");
+        double f20 = AstroCalculator.moonFactorOverHour(h20, lat, lon), f21 = AstroCalculator.moonFactorOverHour(h21, lat, lon);
+        assertTrue(f20 > 0.99, "moon below the horizon for most of 20:00–21:00: " + f20);
+        assertTrue(f21 < 0.9, "moon up for the whole of 21:00–22:00: " + f21);
+        var night = StarIndexCalculator.night(List.of(new HourInput(h20, 1, 0, f20, 1), new HourInput(h21, 1, 0, f21, 1)));
+        assertTrue(night.reasons().contains("MOON_SOME"), night.reasons().toString());
+        assertTrue(night.score() >= 90 && night.score() <= 95, "clear sky, rising moon: " + night.score());
+        assertTrue(night.contributions().get("moon") == 1.0, night.contributions().toString());
+    }
+
+    @Test
+    void theWindowMeanIsRoundedOnce() {
+        Instant t0 = kst("2026-10-12T20:00");
+        // Hourly 100 and 94.81: the mean 97.405 rounds to 97 (rounding each hour first gave (100+95)/2 = 97.5 → 98).
+        var night = StarIndexCalculator.night(List.of(new HourInput(t0, 1, 0, 1.0, 1), new HourInput(t0.plusSeconds(3600), 1, 0, 0.9481, 1)));
+        assertEquals(97, night.score());
+        assertEquals(95, night.hours().get(1).score(), "hourly scores are still rounded for display");
+    }
+
+    @Test
+    void aMissingForecastHourBreaksTheWindow() {
+        Instant t0 = kst("2026-10-12T20:00");
+        // 21:00 has no forecast: 20:00 and 22:00 are not one window; the best pair is 22:00–24:00.
+        var night = StarIndexCalculator.night(List.of(
+                new HourInput(t0, 1, 0, 1, 1),
+                new HourInput(t0.plusSeconds(2 * 3600), 1, 0, 1, 1),
+                new HourInput(t0.plusSeconds(3 * 3600), 3, 0, 1, 1)));
+        assertEquals(t0.plusSeconds(2 * 3600), night.bestFrom());
+        assertEquals(t0.plusSeconds(4 * 3600), night.bestTo());
+        assertEquals(75, night.score());
+        // Only isolated hours: the best single hour stands alone.
+        var lone = StarIndexCalculator.night(List.of(new HourInput(t0, 3, 0, 1, 1), new HourInput(t0.plusSeconds(2 * 3600), 1, 0, 1, 1)));
+        assertEquals(100, lone.score());
+        assertEquals(t0.plusSeconds(2 * 3600), lone.bestFrom());
+        assertEquals(t0.plusSeconds(3 * 3600), lone.bestTo());
     }
 
     @Test

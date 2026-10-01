@@ -219,8 +219,9 @@ public class PackPublisher {
         return OffsetDateTime.ofInstant(i, AstroCalculator.KST).toString();
     }
 
-    private static String hhmm(Instant i) {
-        return i == null ? null : HHMM.format(i.atZone(AstroCalculator.KST));
+    /** HHmm in KST, rounded to the nearest minute like KASI's published times (truncating made 49/102 a minute early). */
+    static String hhmm(Instant i) {
+        return i == null ? null : HHMM.format(i.plusSeconds(30).truncatedTo(ChronoUnit.MINUTES).atZone(AstroCalculator.KST));
     }
 
     /** For logs and tests: the UTF-8 JSON of a stored pack. */

@@ -35,11 +35,13 @@ public class AstroService {
     private final RegionQueryRepository regions;
     private final KasiClient kasi;
     private final EtlRepository repo;
+    private final java.time.Clock clock;
 
-    public AstroService(RegionQueryRepository regions, KasiClient kasi, EtlRepository repo) {
+    public AstroService(RegionQueryRepository regions, KasiClient kasi, EtlRepository repo, java.time.Clock clock) {
         this.regions = regions;
         this.kasi = kasi;
         this.repo = repo;
+        this.clock = clock;
     }
 
     /** Deterministic and cheap (milliseconds per point), so it is not stored. */
@@ -113,21 +115,36 @@ public class AstroService {
 
     private static Instant nz(Instant i) { return i == null ? Instant.EPOCH : i; }
 
+    /**
+     * Calendar days that have already passed are not stored (ADR-018: they would only live until the next retention,
+     * and the daily backup would carry them). The current night's date counts as not passed; a monthly feature
+     * article (dated the 1st) is kept while its month lasts.
+     */
+    private LocalDate currentNight() {
+        return dev.starindex.index.IndexService.nightDateOf(java.time.ZonedDateTime.now(clock));
+    }
+
     public int fetchAstroEvents(YearMonth ym) {
-        var events = kasi.astroEvents(ym);
+        LocalDate night = currentNight();
+        var events = kasi.astroEvents(ym).stream()
+                .filter(e -> !e.locdate().isBefore(night) || (e.monthFeature() && !YearMonth.from(e.locdate()).isBefore(YearMonth.from(night))))
+                .toList();
         repo.upsertAstroEvents(events);
         return events.size();
     }
 
     public int fetchSpecialDays(YearMonth ym) {
+        LocalDate night = currentNight();
         var days = new ArrayList<>(kasi.specialDays("getRestDeInfo", ym));
         days.addAll(kasi.specialDays("get24DivisionsInfo", ym));
+        days.removeIf(d -> d.locdate().isBefore(night));
         repo.upsertSpecialDays(days);
         return days.size();
     }
 
     public int fetchLunar(YearMonth ym) {
-        var days = kasi.lunarMonth(ym);
+        LocalDate night = currentNight();
+        var days = kasi.lunarMonth(ym).stream().filter(d -> !d.solDate().isBefore(night)).toList();
         repo.upsertLunar(days);
         return days.size();
     }

@@ -728,6 +728,8 @@ StarIndex (최소 iOS 26.1, ADR-011)
 
 ### 8.3 팩 스키마(모두 전국 단일 파일)
 
+> **10-01 기준 실제 형식:** 발행 중인 index 팩의 규범은 `contracts/golden/index-pack-v2.json`(schema 2)이다. 천문 시각은 `twilight.{kasi, computed}`에 있고, 등급은 대문자(`EXCELLENT`·`GOOD`·`FAIR`·`POOR`), 이유 코드는 PLAN 3.4 '계산 규칙'의 표를 따른다(ADR-019). 아래 예시의 `"grade":"good"`, `CLOUD_LOW`·`MOON_SETS_2110`, 지역 최상위 `kasi`, `verify` 블록은 R3 이후 설계안이고, 아직 발행하지 않는다.
+
 ```jsonc
 // index v2 (R3). v1 필드는 유지하고 추가만 한다
 { "schema": 2, "version": "2026-12-14-17", "nightDate": "2026-12-14",

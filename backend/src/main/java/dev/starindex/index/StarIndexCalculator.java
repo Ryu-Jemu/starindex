@@ -16,12 +16,19 @@ import java.util.Map;
  * </ul>
  * Hourly score S = 100·Π f. The night's index is the best mean over two consecutive dark hours.
  * Contributions: precipitation → "관측 불가"; all factors 1 → zeros; otherwise ln f_i / Σ ln f_j over the best window.
+ * <p>Rules that fix the result (ADR-019): an hourly forecast at h stands for [h, h+1h), so its moon factor is the
+ * mean over that hour ({@link dev.starindex.astro.AstroCalculator#moonFactorOverHour}), not the value at h; a window
+ * is two hours exactly one hour apart (a missing forecast hour breaks it); the window mean uses the unrounded hourly
+ * scores and is rounded once.
  */
 public final class StarIndexCalculator {
 
-    public record HourInput(Instant hour, int sky, int pty, double moonIlluminated, double moonAltitudeDeg, double lightFactor) {}
+    /** @param moonFactor f_moon averaged over the hour [hour, hour+1h) */
+    public record HourInput(Instant hour, int sky, int pty, double moonFactor, double lightFactor) {}
 
-    public record HourScore(Instant hour, int sky, int pty, double fCloud, double fPrecip, double fMoon, double fLight, int score) {}
+    /** @param raw unrounded S; {@code score} is its rounded value, for display only */
+    public record HourScore(Instant hour, int sky, int pty, double fCloud, double fPrecip, double fMoon, double fLight,
+                            double raw, int score) {}
 
     public enum Grade { POOR, FAIR, GOOD, EXCELLENT }
 
@@ -48,32 +55,41 @@ public final class StarIndexCalculator {
     public static HourScore hour(HourInput in) {
         double fc = cloudFactor(in.sky());
         double fp = in.pty() > 0 ? 0 : 1;
-        double fm = moonFactor(in.moonIlluminated(), in.moonAltitudeDeg());
+        double fm = Math.min(1, Math.max(0, in.moonFactor()));
         double fl = Math.min(1, Math.max(0, in.lightFactor()));
-        int score = (int) Math.round(100 * fc * fp * fm * fl);
-        return new HourScore(in.hour(), in.sky(), in.pty(), fc, fp, fm, fl, score);
+        double raw = 100 * fc * fp * fm * fl;
+        return new HourScore(in.hour(), in.sky(), in.pty(), fc, fp, fm, fl, raw, (int) Math.round(raw));
     }
 
     /**
-     * @param darkHours hourly inputs inside astronomical night, consecutive and in time order
+     * @param darkHours hourly inputs inside astronomical night in time order; hours without a forecast are absent,
+     *                  so neighbours in the list are not necessarily one hour apart
      * @return null when there is no dark hour with a forecast
      */
     public static NightScore night(List<HourInput> darkHours) {
         if (darkHours.isEmpty()) return null;
         List<HourScore> hours = darkHours.stream().map(StarIndexCalculator::hour).toList();
-        int bestStart = 0, width = Math.min(2, hours.size());
+        // Windows are two hours exactly one hour apart. Only when no such pair exists does a single hour stand alone.
+        boolean anyPair = false;
+        for (int i = 0; i + 1 < hours.size(); i++) anyPair |= consecutive(hours.get(i), hours.get(i + 1));
+        int width = anyPair ? 2 : 1, bestStart = -1;
         double best = -1;
         for (int i = 0; i + width <= hours.size(); i++) {
+            if (width == 2 && !consecutive(hours.get(i), hours.get(i + 1))) continue;
             double mean = 0;
-            for (int j = i; j < i + width; j++) mean += hours.get(j).score();
+            for (int j = i; j < i + width; j++) mean += hours.get(j).raw();
             mean /= width;
             if (mean > best) { best = mean; bestStart = i; }
         }
         List<HourScore> window = hours.subList(bestStart, bestStart + width);
-        int score = (int) Math.round(best);
+        int score = (int) Math.round(best);   // rounded once, from the unrounded hourly scores
         Instant from = window.getFirst().hour();
         Instant to = window.getLast().hour().plusSeconds(3600);
         return new NightScore(score, grade(score), from, to, contributions(window), reasons(window), hours);
+    }
+
+    private static boolean consecutive(HourScore a, HourScore b) {
+        return b.hour().getEpochSecond() - a.hour().getEpochSecond() == 3600;
     }
 
     public static Grade grade(int score) {

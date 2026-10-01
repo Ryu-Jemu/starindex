@@ -99,6 +99,16 @@ class RetentionServiceTest extends IntegrationTestBase {
     }
 
     @Test
+    void aMonthlyFeatureStaysForItsMonth() {
+        jdbc.update("INSERT INTO kasi_astro_event (locdate, month_feature, seq, event) VALUES "
+                + "('2026-10-01', true, 1, '10월 특집'), ('2026-10-01', false, 1, '1일 현상'), ('2026-09-01', true, 1, '9월 특집')");
+        retention.purge(OffsetDateTime.parse("2026-10-20T09:00:00+09:00").toInstant());   // night 10-20
+        assertEquals(List.of("10월 특집"), jdbc.queryForList("SELECT event FROM kasi_astro_event", String.class));
+        retention.purge(OffsetDateTime.parse("2026-11-01T06:00:00+09:00").toInstant());   // November: October is over
+        assertEquals(0, count("SELECT COUNT(*) FROM kasi_astro_event"));
+    }
+
+    @Test
     void theNightTurnsAtSixKst() {
         jdbc.update("INSERT INTO star_index_nightly (region_id, night_date, base_at, score, grade) VALUES (?, '2026-02-27', now(), 50, 'FAIR')", SEOUL);
         retention.purge(OffsetDateTime.parse("2026-02-28T05:59:59+09:00").toInstant());   // night 02-27 still in progress

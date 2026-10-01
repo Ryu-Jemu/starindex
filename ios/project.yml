@@ -46,6 +46,12 @@ targets:
         NSLocationDefaultAccuracyReduced: true
         NSMotionUsageDescription: "폰을 드는 방향에 맞춰 하늘을 보여 주기 위해 기기의 방향 센서를 사용합니다."
         ITSAppUsesNonExemptEncryption: false
+        # The target ships its own Info.plist, so INFOPLIST_KEY_* build settings are ignored: version and status bar
+        # are set here. The sky is full screen (no status bar), as INFOPLIST_KEY_UIStatusBarHidden intended.
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        UIStatusBarHidden: true
+        UIViewControllerBasedStatusBarAppearance: false
         # Index pack root: the Neon Object Storage public bucket URL including the bucket name (ADR-017), so the
         # manifest is <base>/packs/manifest/latest.json. Set per configuration below;
         # empty → the chip shows "지수 서버 미설정". Only static files are downloaded; no location is sent (D4).
@@ -61,7 +67,6 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.ryujemu.starindex
         TARGETED_DEVICE_FAMILY: "1"
-        INFOPLIST_KEY_UIStatusBarHidden: YES
         ENABLE_USER_SCRIPT_SANDBOXING: YES
         SWIFT_STRICT_CONCURRENCY: complete
       configs:

@@ -35,7 +35,7 @@ import java.util.function.IntSupplier;
  *   <li>{@code kma_forecast_hour}: rows whose forecast time is older than {@code data-retention} (12 h). Rows for
  *   coming hours survive an ingestion outage.</li>
  *   <li>Night- or day-keyed data ({@code kasi_riseset}, {@code star_index_nightly}, calendars): once that night or day
- *   has passed (the night turns at 06:00 KST).</li>
+ *   has passed (the night turns at 06:00 KST); a monthly feature article (dated the 1st) stays until its month ends.</li>
  *   <li>History ({@code etl_api_call}, {@code astro_crosscheck}, {@code data_pack} + pack files, Spring Batch
  *   metadata): older than {@code history-retention} (2 days); the live, newest-3 and pinned packs always stay.</li>
  * </ul>
@@ -80,7 +80,10 @@ public class RetentionService {
         item(deleted, warnings, "star_index_nightly", () -> jdbc.update("DELETE FROM star_index_nightly WHERE night_date < ?", date(night)));
         item(deleted, warnings, "astro_crosscheck", () -> jdbc.update("DELETE FROM astro_crosscheck WHERE night_date < ?", date(historyDay)));
         item(deleted, warnings, "etl_api_call", () -> jdbc.update("DELETE FROM etl_api_call WHERE called_at < ?", ts(historyCut)));
-        item(deleted, warnings, "kasi_astro_event", () -> jdbc.update("DELETE FROM kasi_astro_event WHERE locdate < ?", date(night)));
+        // A monthly feature article is dated the 1st but covers its whole month: it stays until the month is over.
+        item(deleted, warnings, "kasi_astro_event", () -> jdbc.update(
+                "DELETE FROM kasi_astro_event WHERE locdate < ? AND NOT (month_feature AND locdate >= ?)",
+                date(night), date(night.withDayOfMonth(1))));
         item(deleted, warnings, "kasi_special_day", () -> jdbc.update("DELETE FROM kasi_special_day WHERE locdate < ?", date(night)));
         item(deleted, warnings, "kasi_lunar_day", () -> jdbc.update("DELETE FROM kasi_lunar_day WHERE sol_date < ?", date(night)));
         try {

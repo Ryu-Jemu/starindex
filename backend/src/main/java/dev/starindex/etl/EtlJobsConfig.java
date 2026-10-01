@@ -54,6 +54,16 @@ import java.util.stream.Collectors;
 @EnableConfigurationProperties({EtlProperties.Etl.class, EtlProperties.Pack.class})
 public class EtlJobsConfig {
     private final PlatformTransactionManager noTx = new ResourcelessTransactionManager();
+    /** "Now" for defaults and retention (TimeConfig; pinned in tests that run jobs on fixed fixture dates). */
+    private final java.time.Clock clock;
+
+    public EtlJobsConfig(java.time.Clock clock) {
+        this.clock = clock;
+    }
+
+    private ZonedDateTime nowKst() {
+        return ZonedDateTime.now(clock).withZoneSameInstant(AstroCalculator.KST);
+    }
 
     /** The Neon Object Storage bucket when PACK_BUCKET is set (GitHub Actions ETL, ADR-017), a local directory otherwise. */
     @Bean
@@ -89,7 +99,7 @@ public class EtlJobsConfig {
             JobParameters p = c.getStepExecution().getJobParameters();
             String b = p.getString("base");
             KmaBaseTime base = b == null || b.isBlank()
-                    ? KmaBaseTime.latestAvailable(ZonedDateTime.now(AstroCalculator.KST), etl.kmaAvailabilityDelay())
+                    ? KmaBaseTime.latestAvailable(nowKst(), etl.kmaAvailabilityDelay())
                     : parse("base", b, "202610121700 (yyyyMMddHHmm, 시각은 02·05·08·11·14·17·20·23시)",
                             v -> {
                                 if (!v.matches("\\d{12}")) throw new IllegalArgumentException("12 digits");
@@ -112,7 +122,7 @@ public class EtlJobsConfig {
     Step indexPublishStep(JobRepository repo, IndexService index, PackPublisher publisher, EtlProperties.Pack pack) {
         return new StepBuilder("indexPublish", repo).tasklet((c, ctx) -> {
             String nd = c.getStepExecution().getJobParameters().getString("nightDate");
-            LocalDate nightDate = nd == null || nd.isBlank() ? IndexService.nightDateOf(ZonedDateTime.now(AstroCalculator.KST))
+            LocalDate nightDate = nd == null || nd.isBlank() ? IndexService.nightDateOf(nowKst())
                     : parse("nightDate", nd, "2026-10-12", LocalDate::parse);
             var nights = index.compute(nightDate, pack.hourlySlots(), 1.0);
             int scored = index.persist(nightDate, nights);
@@ -135,7 +145,7 @@ public class EtlJobsConfig {
     @Bean
     Step retentionStep(JobRepository repo, RetentionService retention, EtlProperties.Etl etl) {
         return new StepBuilder("retention", repo).tasklet((c, ctx) -> {
-            var r = retention.purge(java.time.Instant.now());
+            var r = retention.purge(clock.instant());
             String text = "보존 정리 " + r.deleted() + " (수집 데이터 " + human(etl.dataRetention()) + "·지난 밤과 날짜, 이력·발행 "
                     + human(etl.historyRetention()) + ", 팩 현재·최신 " + etl.packKeepMin() + "·고정 유지)";
             if (!r.warnings().isEmpty()) {
@@ -276,19 +286,19 @@ public class EtlJobsConfig {
         }, noTx).build();
     }
 
-    private static LocalDate fromParam(StepContribution c) {
+    private LocalDate fromParam(StepContribution c) {
         String from = c.getStepExecution().getJobParameters().getString("from");
-        return from == null || from.isBlank() ? LocalDate.now(AstroCalculator.KST) : parse("from", from, "2026-10-12", LocalDate::parse);
+        return from == null || from.isBlank() ? nowKst().toLocalDate() : parse("from", from, "2026-10-12", LocalDate::parse);
     }
 
     /** The given month, or this month and the next (events are announced ahead). */
-    private static List<YearMonth> months(StepContribution c) {
+    private List<YearMonth> months(StepContribution c) {
         String m = c.getStepExecution().getJobParameters().getString("month");
         if (m != null && !m.isBlank()) {
             YearMonth ym = parse("month", m, "2026-10", v -> YearMonth.parse(v));
             return List.of(ym);
         }
-        YearMonth now = YearMonth.now(AstroCalculator.KST);
+        YearMonth now = YearMonth.from(nowKst());
         return List.of(now, now.plusMonths(1));
     }
 

@@ -3,10 +3,10 @@
   "generatedAt" : "2026-10-12T17:21:04+09:00",
   "packs" : {
     "index" : {
-      "version" : "20261012-1700-b2a3bf8b",
-      "path" : "packs/index/20261012-1700-b2a3bf8b/index.json.gz",
-      "sha256" : "9a8e803b34fdf613519ac6002c804b590fcf3dcb55d1977f8f860ece5c8bf565",
-      "bytes" : 1477,
+      "version" : "20261012-1700-2b636870",
+      "path" : "packs/index/20261012-1700-2b636870/index.json.gz",
+      "sha256" : "ad103310f466549f7ff820d8f1583b0d6b4603e464f7563bc1e59ea3304d95d7",
+      "bytes" : 1497,
       "nightDate" : "2026-10-12",
       "issuedAt" : "2026-10-12T17:00+09:00"
     }

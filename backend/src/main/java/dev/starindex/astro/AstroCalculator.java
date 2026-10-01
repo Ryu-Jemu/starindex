@@ -54,6 +54,23 @@ public final class AstroCalculator {
         return new NightEvents(nightDate, sunset, civilDusk, nauticalDusk, astroDusk, astroDawn, nauticalDawn, civilDawn, sunrise);
     }
 
+    /** Sample offsets inside an hour (midpoints of six 10-minute bins). */
+    private static final int[] HOUR_SAMPLE_MINUTES = {5, 15, 25, 35, 45, 55};
+
+    /**
+     * Mean moon factor over the hour [hourStart, hourStart+1h) (ADR-019): an hourly forecast stands for the whole hour,
+     * and a moon rising or setting inside it must count for the part of the hour it is up. One value at hourStart
+     * would call a window with a 73% moon rising at 20:53 "no moonlight" (2026-10-01, Seoul).
+     */
+    public static double moonFactorOverHour(Instant hourStart, double lat, double lon) {
+        double sum = 0;
+        for (int m : HOUR_SAMPLE_MINUTES) {
+            MoonState s = moon(hourStart.plusSeconds(60L * m), lat, lon, 0);
+            sum += dev.starindex.index.StarIndexCalculator.moonFactor(s.illuminatedFraction(), s.altitudeDeg());
+        }
+        return sum / HOUR_SAMPLE_MINUTES.length;
+    }
+
     /** Topocentric Moon altitude (refracted, like the sky view) and illuminated fraction at {@code at}. */
     public static MoonState moon(Instant at, double lat, double lon, double heightMeters) {
         Observer obs = new Observer(lat, lon, heightMeters);

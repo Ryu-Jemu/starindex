@@ -174,11 +174,18 @@ docs/       adr/, ATTRIBUTION.md, review-notes.md, verification/, demo-script.md
 | **적중률 스냅숏**(C9, `forecastIngestJob` 안) | R1 첫 주(11/2~11/6, 기한 11/28) | 17:00 발표와 전날 23:00 발표를 수집할 때 ASOS 관측소 격자 10곳의 21·22·23·00시 SKY/PTY를 `forecast_verification`에 바로 쓴다. ASOS 관측값은 R3 `forecastVerifyJob`이 채운다. `collect-only` 프로필과 S3 `raw/`는 폐기했다(ADR-014) | R1~ |
 
 - **지수 v1**(가정, T13·G12로 재보정)
-  - 인자: `f_cloud`(SKY 1/3/4 → 1.0/0.5/0.15), `f_precip`(PTY>0이면 0), `f_moon = 1−0.7k√max(0,sin h_moon)`, `f_light`(VIIRS)
+  - 인자: `f_cloud`(SKY 1/3/4 → 1.0/0.5/0.15), `f_precip`(PTY>0이면 0), `f_moon = 1−0.7k√max(0,sin h_moon)`, `f_light`(VIIRS, R3 전까지 1)
   - `S=100Πf`. 오늘 밤 지수는 2시간 평균의 최대값이다.
   - 기여도: 강수면 '관측 불가', 모든 f=1이면 0, 그 밖에는 `ln f_i/Σln f_j`
-  - 밤 날짜 = 18:00 KST가 속한 날짜
-- **팩 스키마 v1**: `{version, nightDate, regions:[{id, score, best:[from,to], contrib, kasi:{sunset, civile, naute, aste}(KST HHmm), hourly:{t0, sky:[u8×72], pty:[u8×72]}}]}`. `kasi`는 HUD의 "천문박명 종료 19:52(천문연)" 표시에 쓰고, 값이 없으면 AE 계산값을 "(계산)"으로 표시한다.
+  - 밤 날짜 = 06:00 KST에 바뀐다(ADR-018. 그 전에는 12:00)
+  - **계산 규칙(ADR-019, 결과를 정하는 세부)**
+    - 시간 칸: 정각 h의 예보는 [h, h+1시간)을 대표한다. 어두운 시간은 천문박명 끝 ≤ h ≤ 새벽 천문박명 시작인 정각이다.
+    - 달: 그 1시간의 f_moon 평균이다. 10분 칸 6개의 가운데(:05, :15, …, :55)에서 Astronomy Engine 지형 기준 고도(대기굴절 Normal, 관측 고도 0m)와 밝은 면 비율 k로 계산한다.
+    - 창: 정확히 1시간 간격인 두 칸이다. 예보가 빈 시간은 창을 끊는다. 이런 쌍이 하나도 없으면 가장 좋은 한 칸을 쓴다. 같은 값이면 이른 창을 쓴다.
+    - 반올림: 시간별 원점수의 창 평균을 한 번만 반올림한다. 시간별 정수는 표시용이다.
+    - 이유 코드: `PRECIP`(창 안 PTY>0), 창의 가장 나쁜 SKY에 따라 `CLOUD_CLEAR`/`CLOUD_MOSTLY`/`CLOUD_OVERCAST`, 창의 평균 f_moon에 따라 `MOON_NONE`(≥0.95)/`MOON_SOME`(≥0.7)/`MOON_BRIGHT`. 예보가 없으면 `NO_FORECAST`.
+    - 등급: 80 이상 `EXCELLENT`, 60 이상 `GOOD`, 40 이상 `FAIR`, 그 밖 `POOR`(SERVICE-PLAN 4.5 판정 문구와 같은 경계)
+- **팩 스키마**: 규범은 실제로 발행되는 **schema 2**이고, 기준 파일은 `contracts/golden/index-pack-v2.json`(백엔드 골든 테스트와 iOS 디코더 테스트가 같은 파일을 검사)이다. 지역마다 `id, name, kind, grid, score, grade, best:[HHmm,HHmm], reasons, contrib, twilight:{kasi:{sunset,civile,naute,aste}|null, computed:{sunset,civile,naute,aste,astm,sunrise}}, hourly:{t0, sky, pty, tmp, reh, wsd, pop}`(72칸, 1시간 간격)를 둔다. 시각은 KST HHmm이고 가장 가까운 분으로 반올림한다(ADR-019). 앱은 천문연 값을 "(천문연)"으로 보여 주고, 없으면 계산값을 "(계산)"으로 보여 준다. (이전 "팩 스키마 v1"의 지역 최상위 `kasi`와 `hourly:{t0, sky, pty}`는 schema 2로 대체됐다.)
 - **REST 경로**(확정)
   - 헬스: `/api/health`(단순 UP, DB를 조회하지 않는다. `/actuator/health`는 db 지표가 Neon을 깨우므로 주기적으로 호출하지 않는다, ADR-015)
   - 공개 `/api/v1/**`
@@ -219,7 +226,7 @@ docs/       adr/, ATTRIBUTION.md, review-notes.md, verification/, demo-script.md
   - `packs/manifest/latest.json`: 업로드 시 `Cache-Control: max-age=60, must-revalidate`
   - `packs/{index,catalog,events,spots}/v…/*`: `Cache-Control: public, max-age=31536000, immutable`. `.json.gz`는 `Content-Type: application/gzip`(Content-Encoding 없음)이고 sha256은 **압축된 바이트**로 계산한다.
   - `legal/*.html`
-  - `backup/db/`: 매일 05:20 KST 전체 `pg_dump`(EC2의 PostgreSQL 18 클라이언트가 Neon에서 받는다), 수명주기 **7일**(ADR-014). Neon Free 이력은 6시간뿐이라 이것이 실제 백업이다(ADR-015)
+  - `backup/db/`: (ADR-017로 대체: 매일 00:40 KST `etl.yml`의 daily 실행이 `pg_dump`를 GitHub 아티팩트 `starindex-db-<날짜>`로 7일 보관하고, 복원은 `ops/neon/restore.sh`로 새 DB에 한 뒤 `DB_URL` 시크릿만 바꾼다. `docs/ETL.md` 7·8절) 매일 05:20 KST 전체 `pg_dump`(EC2의 PostgreSQL 18 클라이언트가 Neon에서 받는다), 수명주기 **7일**(ADR-014). Neon Free 이력은 6시간뿐이라 이것이 실제 백업이다(ADR-015)
     - 복원: 6시간 안이면 Neon 즉시 복원. 그 밖에는 `deploy/postgres/restore.sh`로 운영 DB 옆 **새 DB**에 복원하고, 필요하면 `--switch`로 바꾼다. 운영 DB는 지우지 않는다
   - `deploy/backend/{sha}.zip`: 수명주기 **90일**(롤백 리비전 보존)
   - 버킷 정책: Principal `cloudfront.amazonaws.com`, `AWS:SourceArn`=배포 ARN, Resource는 `packs/*`와 `legal/*`**만** 허용

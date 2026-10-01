@@ -53,6 +53,8 @@ class EtlJobsIntegrationTest extends IntegrationTestBase {
         r.add("starindex.data-go-kr.service-key", () -> "test+key/value==");
         r.add("starindex.data-go-kr.min-interval", () -> "1ms");
         r.add("starindex.pack.local-dir", PACKS::toString);
+        // Fixtures are dated October 2026 and every pipeline ends with retention: pin "now" before them (TimeConfig).
+        r.add("starindex.clock.fixed", () -> "2026-10-01T09:00:00+09:00");
     }
 
     @Autowired JobOperator jobs;
@@ -198,7 +200,7 @@ class EtlJobsIntegrationTest extends IntegrationTestBase {
      * DB-PLAN C2: the app-facing pack must not change while the storage underneath is reshaped (V5/V6). The hash was
      * recorded with the pre-change code (commit 269d608) for this fixed input; mixed SKY/PTY exercise every branch.
      */
-    static final String PACK_JSON_GOLDEN_SHA256 = "e039f859c2a117b2a54f0c7b3fa1a21c98081d7e0cddb506ddbbe5261253c8b6";
+    static final String PACK_JSON_GOLDEN_SHA256 = "e95eda135a3e3743832f2f3a44d77b7a74ca5c189badc3ac4eeb2fd0dfebb79b";
 
     @Test
     void packJsonIsUnchangedByStorageChanges() throws Exception {
@@ -219,8 +221,9 @@ class EtlJobsIntegrationTest extends IntegrationTestBase {
         String json = PackPublisher.gunzipToString(packStore.get(manifestField("/packs/index/path")).orElseThrow());
         assertTrue(json.contains("\"tmp\":[null,null,null,null,null,null,14.0,"), "slots before 18:00 are null; TMP keeps one decimal");
         assertTrue(json.contains("1.8"), "WSD 1.8 printed exactly");
-        assertEquals(PACK_JSON_GOLDEN_SHA256, PackWriter.sha256(json.getBytes(StandardCharsets.UTF_8)), json.substring(0, 400));
+        // Contract files first: with UPDATE_GOLDEN=1 they are rewritten, then the pinned hash below must be updated too.
         assertMatchesContract(json, packStore.get(manifestField("/packs/index/path")).orElseThrow());
+        assertEquals(PACK_JSON_GOLDEN_SHA256, PackWriter.sha256(json.getBytes(StandardCharsets.UTF_8)), json.substring(0, 400));
     }
 
     /**

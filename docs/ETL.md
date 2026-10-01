@@ -143,5 +143,5 @@ scripts/etl.sh pin <version>   # 이 팩 버전은 보존 정리에서 지우지
   - 버킷의 manifest까지 보려면 `ops/neon/app.env`에 `PACK_BUCKET`, `AWS_ENDPOINT_URL_S3`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`를 더한다.
   - '지금 실행'은 Mac에서 Job을 돌린다. 운영 실행은 `gh workflow run etl -f job=<Job> -f params="nightDate=2026-10-12"`.
 - 감시: 실행이 실패하면 GitHub가 메일을 보낸다(공개 팩의 발표가 6시간보다 오래되면 실패). 첫 주에 Neon Usage(CU-시간, 전송량)와 Actions 사용 분을 확인한다.
-- 복원: `gh run download <run-id> -n starindex-db-<날짜> -D /tmp/r && ops/neon/restore.sh /tmp/r/starindex.dump starindex_<날짜>`. 출력에 나오는 `gh secret set DB_URL` 명령으로 전환한다.
+- 복원: `gh run download <run-id> -n starindex-db-2026-10-01 -D /tmp/r && ops/neon/restore.sh /tmp/r/starindex.dump starindex_20261001`. 새 DB 이름에는 하이픈을 쓸 수 없다(소문자·숫자·밑줄만). 출력에 나오는 `gh secret set DB_URL` 명령으로 전환한다.
 - 로컬 재현(키·계정 없이): `scripts/etl-local-e2e.sh`. 가짜 data.go.kr → 워크플로와 같은 jar 실행 → S3 호환 버킷(S3Mock) → 익명 읽기 검사 순서로 돈다. 운영 스크립트 검증은 `scripts/neon-ops-check.sh`다.

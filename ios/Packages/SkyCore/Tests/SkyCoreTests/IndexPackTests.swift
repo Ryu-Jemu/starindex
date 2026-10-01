@@ -38,8 +38,8 @@ struct IndexPackGoldenTests {
         let m = try Golden.manifest()
         #expect(m.schema == 1)
         let e = try #require(m.packs.index)
-        #expect(e.version == "20261012-1700-b2a3bf8b")
-        #expect(e.path == "packs/index/20261012-1700-b2a3bf8b/index.json.gz")
+        #expect(e.version == "20261012-1700-2b636870")
+        #expect(e.path == "packs/index/20261012-1700-2b636870/index.json.gz")
         #expect(e.nightDate == "2026-10-12")
         #expect(IndexPackDecoder.isSafeRelativePath(e.path))
         #expect(m.generatedDate == kst(2026, 10, 12, 17, 21, 4))
@@ -73,8 +73,9 @@ struct IndexPackGoldenTests {
         #expect(seoul.reasons == ["CLOUD_MOSTLY", "MOON_NONE"])
         #expect(seoul.contrib?["cloud"] == 1.0)
         #expect(seoul.twilight?.kasi == nil)
-        #expect(seoul.twilight?.computed == .init(sunset: "1759", civile: "1825", naute: "1856", aste: "1926",
-                                                  astm: "0511", sunrise: "0637"))
+        // Rounded to the nearest minute since ADR-019 (KASI's convention); before, seconds were truncated.
+        #expect(seoul.twilight?.computed == .init(sunset: "1800", civile: "1826", naute: "1856", aste: "1927",
+                                                  astm: "0511", sunrise: "0638"))
         #expect(seoul.hourly?.t0 == "2026-10-12T12:00+09:00")
         #expect(seoul.hourly?.sky?[0] == nil && seoul.hourly?.sky?[6] == 3)
         #expect(seoul.hourly?.tmp?[6] == 14.0 && seoul.hourly?.wsd?[6] == 1.8)
@@ -88,7 +89,7 @@ struct IndexPackGoldenTests {
         #expect(throws: IndexPackDecoder.Failure.shaMismatch) { try IndexPackDecoder.decode(gzipped: gz, entry: entry) }
         var short = entry
         short.bytes = 10
-        #expect(throws: IndexPackDecoder.Failure.sizeMismatch(expected: 10, actual: 1477)) {
+        #expect(throws: IndexPackDecoder.Failure.sizeMismatch(expected: 10, actual: try Golden.gz().count)) {
             try IndexPackDecoder.decode(gzipped: Golden.gz(), entry: short)
         }
         var otherVersion = entry
@@ -273,7 +274,7 @@ struct IndexSummaryTests {
         #expect(s.reasons == ["구름많음", "달빛 영향 없음"])
         #expect(s.verdict == "밝은 별 위주로 보여요")
         #expect(s.issueDateLabel == "10/12 17시 발표")
-        #expect(s.twilight.map(\.time) == ["17:59", "18:25", "18:56", "19:26", "05:11", "06:37"])
+        #expect(s.twilight.map(\.time) == ["18:00", "18:26", "18:56", "19:27", "05:11", "06:38"])
         #expect(s.twilight.allSatisfy { $0.sourceLabel == "(계산)" })
         #expect(s.attribution.first?.contains("기상청") == true)
 
