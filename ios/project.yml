@@ -68,7 +68,7 @@ targets:
         # Debug: scripts/serve-packs.sh on the Mac (reachable from the simulator only).
         Debug:
           STARINDEX_PACK_BASE_URL: "http://127.0.0.1:8090"
-        # Release: the public bucket, https://<branch-id>.storage.c-<N>.<region>.aws.neon.tech/<bucket>, filled in
-        # once the bucket exists (docs/ETL.md "무과금 운영").
+        # Release: the Neon Object Storage public_read bucket (ADR-017; GitHub variable PACK_PUBLIC_URL). Anonymous
+        # HTTPS reads only; the app sends nothing about the user (D4).
         Release:
-          STARINDEX_PACK_BASE_URL: ""
+          STARINDEX_PACK_BASE_URL: "https://br-plain-rain-b3ncmzca.storage.c-4.ap-southeast-1.aws.neon.tech/starindex-packs"
