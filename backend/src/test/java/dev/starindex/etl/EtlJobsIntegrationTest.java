@@ -189,6 +189,20 @@ class EtlJobsIntegrationTest extends IntegrationTestBase {
     }
 
     @Test
+    void anUnreachableDataGoKrStopsAfterTwoCellsInsteadOfWaitingForAll() throws Exception {
+        // A blocked network path (data.go.kr refusing an overseas runner): the connection is reset on every call.
+        WM.stubFor(get(urlPathEqualTo("/1360000/VilageFcstInfoService_2.0/getVilageFcst"))
+                .willReturn(aResponse().withFault(com.github.tomakehurst.wiremock.http.Fault.CONNECTION_RESET_BY_PEER)));
+        JobExecution e = run(forecastPipelineJob, "base", "202610121700", "nightDate", "2026-10-12");
+        assertEquals(BatchStatus.FAILED, e.getStatus());
+        assertTrue(failures(e).contains("data.go.kr에 연결할 수 없습니다"), failures(e));
+        long cellsTried = WM.getAllServeEvents().stream()
+                .map(ev -> ev.getRequest().queryParameter("nx").firstValue() + "," + ev.getRequest().queryParameter("ny").firstValue())
+                .distinct().count();
+        assertEquals(ForecastIngestService.UNREACHABLE_AFTER, cellsTried, "stopped early instead of trying all 17 cells");
+    }
+
+    @Test
     void malformedParametersStopWithTheExpectedFormat() throws Exception {
         JobExecution e = run(forecastIngestJob, "base", "2026101217");
         assertEquals(BatchStatus.FAILED, e.getStatus());

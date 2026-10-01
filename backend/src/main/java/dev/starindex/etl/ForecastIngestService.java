@@ -19,10 +19,15 @@ import java.util.Set;
  * Fetches one 단기예보 issue for every distinct grid cell of the active points. One transaction per cell. Key and quota
  * errors stop the whole run (every other cell would fail the same way); other errors are recorded and the run goes on,
  * then completeness decides.
+ * <p>Fail fast when data.go.kr cannot be reached at all: if the first {@link #UNREACHABLE_AFTER} cells all fail with a
+ * connection error and none has succeeded, the run stops. data.go.kr refuses some overseas addresses (GitHub-hosted
+ * runners), and without this a blocked runner spends ~5 minutes retrying 17 cells; the workflow retries on a fresh
+ * runner instead (ADR-017).
  */
 @Service
 public class ForecastIngestService {
     private static final Logger log = LoggerFactory.getLogger(ForecastIngestService.class);
+    static final int UNREACHABLE_AFTER = 2;
 
     public record Report(KmaBaseTime base, int cells, int ok, int rows, List<String> failures) {
         public double completeness() { return cells == 0 ? 0 : (double) ok / cells; }
@@ -71,6 +76,10 @@ public class ForecastIngestService {
                 if (e.kind().stopsRun()) throw new EtlStopException(e.guidance(), e);
                 log.warn("forecast {} {} failed: {}", c, base, e.guidance());
                 failures.add(c.nx() + "," + c.ny() + " " + e.kind() + (e.code() == null ? "" : " " + e.code()));
+                if (ok == 0 && failures.size() >= UNREACHABLE_AFTER
+                        && failures.stream().allMatch(f -> f.endsWith(" " + DataGoKrException.Kind.IO.name())))
+                    throw new EtlStopException("data.go.kr에 연결할 수 없습니다(처음 " + failures.size()
+                            + "개 격자 모두 통신 오류). 이 실행 환경의 IP가 막혔을 수 있습니다: " + failures, e);
             }
         }
         return new Report(base, cells.size(), ok, rows, failures);
