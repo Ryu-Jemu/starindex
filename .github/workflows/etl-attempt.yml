@@ -2,6 +2,9 @@ name: etl-attempt
 
 # One attempt of the scheduled ETL (called by etl.yml up to 3 times, each on a fresh GitHub-hosted runner). Attempt 1
 # plans from the trigger; retries reuse attempt 1's plan. See etl.yml for the schedule, secrets and variables.
+# "blocked" = data.go.kr unreachable from this runner, seen by the probe before the build or by the jar itself (exit 75,
+# ForecastIngestService). A blocked attempt that is not the last ends green so the next one runs; the last one still
+# runs retentionJob (Neon only, ADR-018) and then fails, which makes GitHub mail the failure.
 on:
   workflow_call:
     inputs:
@@ -49,7 +52,7 @@ jobs:
       jobs: ${{ steps.plan.outputs.jobs }}
       params: ${{ steps.plan.outputs.params }}
       check: ${{ steps.plan.outputs.check }}
-      blocked: ${{ steps.reach.outputs.blocked }}
+      blocked: ${{ steps.reach.outputs.blocked == 'true' || steps.run.outputs.blocked == 'true' }}
     steps:
       - name: configured?
         id: cfg
@@ -89,78 +92,80 @@ jobs:
           PLANNED_CHECK: ${{ inputs.planned_check }}
         run: |
           if [ "$PLANNED" = true ]; then   # a retry: run what attempt 1 planned and could not do (no second backup)
-            { echo "jobs=$PLANNED_JOBS"; echo "params=$PLANNED_PARAMS"; echo "backup=false"; echo "check=$PLANNED_CHECK"; } >> "$GITHUB_OUTPUT"
-            echo "attempt $ATTEMPT, jobs: ${PLANNED_JOBS:-none} ${PLANNED_PARAMS}"
-            exit 0
-          fi
-          if [ "$EVENT" = workflow_dispatch ]; then job="$INPUT_JOB"
-          elif [ "$SCHEDULE" = "40 15 * * *" ]; then job=daily
-          else job=forecastPipelineJob; fi
-          params=""
-          for kv in $INPUT_PARAMS; do   # values reach the JVM as job parameters: dates and numbers only
-            [[ "$kv" =~ ^(base|nightDate|from|month)=[0-9-]{1,16}$ ]] || { echo "::error::bad parameter: $kv"; exit 1; }
-            params="$params $kv"
-          done
-          if [ "$job" = daily ]; then jobs="astroDailyJob astroEventsJob"; else jobs="$job"; fi
-          # Without the data.go.kr key only the key-free work runs (retention + Astronomy Engine; index republish).
-          if [ "$HAS_KEY" != true ]; then
-            kept=""
-            for j in $jobs; do
-              case "$j" in astroDailyJob|starIndexPublishJob) kept="$kept $j" ;; *) echo "::warning::$j skipped: no DATA_GO_KR_SERVICE_KEY secret (the app shows no index until it is set)" ;; esac
+            jobs="$PLANNED_JOBS"; params="$PLANNED_PARAMS"; backup=false; check="$PLANNED_CHECK"
+          else
+            if [ "$EVENT" = workflow_dispatch ]; then job="$INPUT_JOB"
+            elif [ "$SCHEDULE" = "40 15 * * *" ]; then job=daily
+            else job=forecastPipelineJob; fi
+            params=""
+            for kv in $INPUT_PARAMS; do   # values reach the JVM as job parameters: dates and numbers only
+              [[ "$kv" =~ ^(base|nightDate|from|month)=[0-9-]{1,16}$ ]] || { echo "::error::bad parameter: $kv"; exit 1; }
+              params="$params $kv"
             done
-            jobs="${kept# }"
-          fi
-          {
-            echo "jobs=$jobs"
-            echo "params=${params# }"
-            echo "backup=$([ "$job" = daily ] && echo true || echo false)"
+            params="${params# }"
+            if [ "$job" = daily ]; then jobs="astroDailyJob astroEventsJob"; else jobs="$job"; fi
+            # Without the data.go.kr key only the key-free work runs (retention + Astronomy Engine; index republish).
+            if [ "$HAS_KEY" != true ]; then
+              kept=""
+              for j in $jobs; do
+                case "$j" in astroDailyJob|starIndexPublishJob|retentionJob) kept="$kept $j" ;; *) echo "::warning::$j skipped: no DATA_GO_KR_SERVICE_KEY secret (the app shows no index until it is set)" ;; esac
+              done
+              jobs="${kept# }"
+            fi
+            backup=$([ "$job" = daily ] && echo true || echo false)
             # What the app sees is checked after every forecast run and once a day, so a missing key or a stalled
             # ETL turns red at least daily (GitHub mails failed runs) instead of skipping quietly.
-            echo "check=$([ "$job" = daily ] || [[ " $jobs " == *" forecastPipelineJob "* ]] && echo true || echo false)"
-          } >> "$GITHUB_OUTPUT"
-          echo "jobs: ${jobs:-none} ${params}"
+            check=$([ "$job" = daily ] || [[ " $jobs " == *" forecastPipelineJob "* ]] && echo true || echo false)
+          fi
+          # Only jobs that call data.go.kr wait for the probe (astroDailyJob without a key is retention only).
+          net=false
+          for j in $jobs; do
+            case "$j" in
+              starIndexPublishJob|retentionJob) ;;
+              astroDailyJob) [ "$HAS_KEY" = true ] && net=true ;;
+              *) net=true ;;
+            esac
+          done
+          { echo "jobs=$jobs"; echo "params=$params"; echo "backup=$backup"; echo "check=$check"; echo "net=$net"; } >> "$GITHUB_OUTPUT"
+          echo "attempt $ATTEMPT, jobs: ${jobs:-none} ${params}"
 
       # Setup only when a job will run: a skipped run costs seconds, not a billed minute of Java/Gradle setup.
       - uses: actions/checkout@v7
         if: steps.cfg.outputs.ok == 'true'
 
       # data.go.kr may refuse this runner's (overseas) address. Any HTTP answer, even 401/403 for the dummy key, means
-      # it is reachable; three connection failures mean it is not, and the next attempt gets a fresh runner.
+      # it is reachable; three connection failures (same 5 s connect timeout as the jar) mean it is not. A runner that
+      # passes here and still cannot fetch is caught by the jar (exit 75, below).
       - name: Reach data.go.kr
         id: reach
-        if: steps.plan.outputs.jobs != ''
-        env:
-          FINAL: ${{ inputs.final }}
+        if: steps.plan.outputs.net == 'true'
         run: |
           url="https://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/getVilageFcst?serviceKey=reachability-probe&numOfRows=1&pageNo=1"
           for _ in 1 2 3; do
-            code="$(curl -s -o /dev/null -w '%{http_code}' --connect-timeout 8 --max-time 15 "$url" || true)"
+            code="$(curl -s -o /dev/null -w '%{http_code}' --connect-timeout 5 --max-time 15 "$url" || true)"
             if [ "$code" != 000 ]; then echo "reachable (HTTP $code)"; echo "blocked=false" >> "$GITHUB_OUTPUT"; exit 0; fi
             sleep 3
           done
           echo "blocked=true" >> "$GITHUB_OUTPUT"
-          if [ "$FINAL" = true ]; then
-            echo "::error::data.go.kr unreachable from 3 runners in a row; the app keeps the last pack."; exit 1
-          fi
-          echo "::warning::data.go.kr unreachable from this runner; retrying on a fresh runner."
+          echo "::warning::data.go.kr unreachable from this runner."
       - uses: actions/setup-java@v6
-        if: steps.plan.outputs.jobs != '' && steps.reach.outputs.blocked != 'true'
+        if: steps.plan.outputs.jobs != '' && (steps.reach.outputs.blocked != 'true' || inputs.final)
         with:
           distribution: temurin
           java-version: "21"
       # The jar is rebuilt only when the backend changes. restore/save are split so the jar is saved right after it
       # is built, even if the job that follows fails (cache's post step saves only on success).
       - name: Cached jar
-        if: steps.plan.outputs.jobs != '' && steps.reach.outputs.blocked != 'true'
+        if: steps.plan.outputs.jobs != '' && (steps.reach.outputs.blocked != 'true' || inputs.final)
         id: jar
         uses: actions/cache/restore@v6
         with:
           path: backend/build/etl/app.jar
           key: etl-jar-${{ hashFiles('backend/src/main/**', 'backend/build.gradle.kts', 'backend/settings.gradle.kts', 'backend/gradle/**', 'backend/libs/**') }}
       - uses: gradle/actions/setup-gradle@v6
-        if: steps.plan.outputs.jobs != '' && steps.reach.outputs.blocked != 'true' && steps.jar.outputs.cache-hit != 'true'
+        if: steps.plan.outputs.jobs != '' && (steps.reach.outputs.blocked != 'true' || inputs.final) && steps.jar.outputs.cache-hit != 'true'
       - name: Build the jar
-        if: steps.plan.outputs.jobs != '' && steps.reach.outputs.blocked != 'true' && steps.jar.outputs.cache-hit != 'true'
+        if: steps.plan.outputs.jobs != '' && (steps.reach.outputs.blocked != 'true' || inputs.final) && steps.jar.outputs.cache-hit != 'true'
         working-directory: backend
         run: |
           ./gradlew -q --no-daemon bootJar
@@ -168,41 +173,66 @@ jobs:
           for f in build/libs/*.jar; do [[ "$f" == *-plain.jar ]] || cp "$f" build/etl/app.jar; done
           test -s build/etl/app.jar
       - uses: actions/cache/save@v6
-        if: steps.plan.outputs.jobs != '' && steps.reach.outputs.blocked != 'true' && steps.jar.outputs.cache-hit != 'true'
+        if: steps.plan.outputs.jobs != '' && (steps.reach.outputs.blocked != 'true' || inputs.final) && steps.jar.outputs.cache-hit != 'true'
         with:
           path: backend/build/etl/app.jar
           key: ${{ steps.jar.outputs.cache-primary-key }}
 
       - name: Run
-        if: steps.plan.outputs.jobs != '' && steps.reach.outputs.blocked != 'true'
+        id: run
+        if: steps.plan.outputs.jobs != '' && (steps.reach.outputs.blocked != 'true' || inputs.final)
         working-directory: backend
         env:
           JOBS: ${{ steps.plan.outputs.jobs }}
           PARAMS: ${{ steps.plan.outputs.params }}
+          PROBE_BLOCKED: ${{ steps.reach.outputs.blocked }}
+          FINAL: ${{ inputs.final }}
           DB_URL: ${{ secrets.DB_URL }}
           DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
           DATA_GO_KR_SERVICE_KEY: ${{ secrets.DATA_GO_KR_SERVICE_KEY }}
           AWS_ACCESS_KEY_ID: ${{ secrets.NEON_STORAGE_KEY_ID }}       # a Neon storage credential, not an AWS key
           AWS_SECRET_ACCESS_KEY: ${{ secrets.NEON_STORAGE_SECRET }}
         run: |
-          rc=0
-          for job in $JOBS; do
-            echo "::group::$job"
-            # KST JVM: Spring Batch stores local times; the admin page then shows the same clock for every run.
-            # shellcheck disable=SC2086  # PARAMS is a validated key=value list
+          etl() {   # one job; KST JVM: Spring Batch stores local times, so the admin page shows one clock for every run
+            echo "::group::$1"
+            local c=0
+            # shellcheck disable=SC2086  # $2 is the validated key=value list
             java -Xmx512m -XX:+UseSerialGC -Duser.timezone=Asia/Seoul -jar build/etl/app.jar \
               --spring.main.web-application-type=none --spring.main.banner-mode=off \
-              --spring.batch.job.enabled=true --spring.batch.job.name="$job" \
+              --spring.batch.job.enabled=true --spring.batch.job.name="$1" \
               --logging.level.root=WARN --logging.level.ETL=INFO \
               --logging.level.org.springframework.batch.core.step.AbstractStep=OFF \
-              "run.at=$(date +%s%3N)" $PARAMS || rc=$?
+              "run.at=$(date +%s%3N)" $2 || c=$?
             echo "::endgroup::"
-          done
-          exit $rc
+            return "$c"
+          }
+          rc=0; blocked=false
+          [ "$PROBE_BLOCKED" = true ] && blocked=true   # only the last attempt gets here with a blocked probe
+          if [ "$blocked" != true ]; then
+            for job in $JOBS; do
+              c=0; etl "$job" "$PARAMS" || c=$?
+              if [ "$c" = 75 ]; then blocked=true; break; fi   # the jar could not reach data.go.kr after all
+              [ "$c" = 0 ] || rc=$c
+            done
+          fi
+          echo "blocked=$blocked" >> "$GITHUB_OUTPUT"
+          if [ "$blocked" = true ]; then
+            if [ "$FINAL" != true ]; then
+              echo "::warning::data.go.kr unreachable from this runner; retrying on a fresh runner."
+              exit "$rc"
+            fi
+            # Neon is reachable even when data.go.kr is not: keep collected data within its 12 hours (ADR-018).
+            if [[ " $JOBS " == *" forecastPipelineJob "* || " $JOBS " == *" astroDailyJob "* ]]; then
+              etl retentionJob "" || echo "::warning::retentionJob failed too"
+            fi
+            echo "::error::data.go.kr unreachable from 3 runners in a row; the app keeps the last pack."
+            exit 1
+          fi
+          exit "$rc"
 
       # What the app sees: anonymous GETs of the public bucket, sha256, gzip, freshness (two missed issues = fail).
       - name: Public pack check
-        if: ${{ !cancelled() && steps.plan.outputs.check == 'true' && (steps.reach.outputs.blocked != 'true' || inputs.final) }}
+        if: ${{ !cancelled() && steps.plan.outputs.check == 'true' && ((steps.reach.outputs.blocked != 'true' && steps.run.outputs.blocked != 'true') || inputs.final) }}
         run: python3 scripts/check-public-pack.py "$PACK_PUBLIC_URL" --max-age-min 360
 
       # Neon Free keeps 6 hours of history; this is the real backup (ADR-015). pg_dump must be ≥ the server (18).

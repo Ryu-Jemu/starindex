@@ -140,6 +140,49 @@ class CoreLogicTest {
     }
 
     @Test
+    void darkHoursAreWholeHoursInsideAstronomicalNight() {
+        // ADR-019: [h, h+1h) must lie between dusk and dawn. 10/1 Seoul: dusk 19:43, dawn 05:01 → 20:00 … 04:00;
+        // the 05:00 hour is 59 minutes of morning twilight.
+        double lat = 37.5665, lon = 126.978;
+        var oct1 = AstroCalculator.night(LocalDate.of(2026, 10, 1), lat, lon, 0);
+        var hours = dev.starindex.index.IndexService.darkHours(oct1.astronomicalDusk(), oct1.astronomicalDawn());
+        assertEquals(kst("2026-10-01T20:00"), hours.getFirst());
+        assertEquals(kst("2026-10-02T04:00"), hours.getLast());
+        assertEquals(9, hours.size());
+        // Dawn 06:09 (12/20): the last hour is 05:00, so no window crosses the 06:00 night boundary (ADR-018).
+        var dec20 = AstroCalculator.night(LocalDate.of(2026, 12, 20), lat, lon, 0);
+        assertEquals(kst("2026-12-21T05:00"), dev.starindex.index.IndexService.darkHours(dec20.astronomicalDusk(), dec20.astronomicalDawn()).getLast());
+        // Ends exactly on the hour count; no night, no hours.
+        assertEquals(List.of(kst("2026-10-12T20:00"), kst("2026-10-12T21:00")),
+                dev.starindex.index.IndexService.darkHours(kst("2026-10-12T20:00"), kst("2026-10-12T22:00")));
+        assertTrue(dev.starindex.index.IndexService.darkHours(null, kst("2026-10-13T05:00")).isEmpty());
+    }
+
+    @Test
+    void aMoonSettingBeforeDawnDoesNotPullTheWindowIntoTwilight() {
+        // 10/22 Seoul, clear: an 80% moon sets 03:19 and astronomical dawn is 05:20. Counting the 05:00 hour, mostly
+        // twilight, as moonless dark sky gave 04:00–06:00 at 100; whole dark hours give 03:00–05:00.
+        double lat = 37.5665, lon = 126.978;
+        var n = AstroCalculator.night(LocalDate.of(2026, 10, 22), lat, lon, 0);
+        var dark = new ArrayList<HourInput>();
+        for (Instant h : dev.starindex.index.IndexService.darkHours(n.astronomicalDusk(), n.astronomicalDawn()))
+            dark.add(new HourInput(h, 1, 0, AstroCalculator.moonFactorOverHour(h, lat, lon), 1));
+        var night = StarIndexCalculator.night(dark);
+        assertEquals(kst("2026-10-23T03:00"), night.bestFrom());
+        assertEquals(kst("2026-10-23T05:00"), night.bestTo());
+        assertFalse(night.bestTo().isAfter(n.astronomicalDawn()));
+        assertEquals(99, night.score());
+    }
+
+    @Test
+    void theBatchCliExits75OnlyWhenDataGoKrWasUnreachable() {   // .github/workflows/etl-attempt.yml retries on 75
+        assertEquals(0, StarIndexApplication.exitCode(0, false));
+        assertEquals(5, StarIndexApplication.exitCode(5, false), "FAILED");
+        assertEquals(75, StarIndexApplication.exitCode(5, true));
+        assertEquals(0, StarIndexApplication.exitCode(0, true), "a completed run is never reported as unreachable");
+    }
+
+    @Test
     void theWindowMeanIsRoundedOnce() {
         Instant t0 = kst("2026-10-12T20:00");
         // Hourly 100 and 94.81: the mean 97.405 rounds to 97 (rounding each hour first gave (100+95)/2 = 97.5 → 98).

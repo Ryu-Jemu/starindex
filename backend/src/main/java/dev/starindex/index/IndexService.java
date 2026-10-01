@@ -46,6 +46,20 @@ public class IndexService {
         return now.withZoneSameInstant(AstroCalculator.KST).minusHours(6).toLocalDate();
     }
 
+    /**
+     * The whole hours [h, h+1h) inside astronomical night (ADR-019): the first starts at or after dusk, the last ends at
+     * or before dawn. Until 10-01 the last hour only had to start before dawn, so a window could run up to 59 minutes
+     * into morning twilight and count it as moonless dark sky (Seoul 10/22: 04:00–06:00 with dawn at 05:20).
+     */
+    public static List<Instant> darkHours(Instant astronomicalDusk, Instant astronomicalDawn) {
+        List<Instant> hours = new ArrayList<>();
+        if (astronomicalDusk == null || astronomicalDawn == null) return hours;
+        Instant h = astronomicalDusk.truncatedTo(ChronoUnit.HOURS);   // KST is a whole-hour offset from UTC
+        if (h.isBefore(astronomicalDusk)) h = h.plus(1, ChronoUnit.HOURS);
+        for (; !h.plus(1, ChronoUnit.HOURS).isAfter(astronomicalDawn); h = h.plus(1, ChronoUnit.HOURS)) hours.add(h);
+        return hours;
+    }
+
     public List<RegionNight> compute(LocalDate nightDate, int seriesSlots, double lightFactor) {
         Instant seriesStart = ZonedDateTime.of(nightDate, LocalTime.NOON, AstroCalculator.KST).toInstant();
         Instant seriesEnd = seriesStart.plus(seriesSlots, ChronoUnit.HOURS);
@@ -55,17 +69,13 @@ public class IndexService {
             var series = repo.latestForecast(r.getKmaNx(), r.getKmaNy(), seriesStart, seriesEnd);
             Instant baseAt = repo.latestBaseAt(r.getKmaNx(), r.getKmaNy()).orElse(null);
             List<StarIndexCalculator.HourInput> dark = new ArrayList<>();
-            if (night.astronomicalDusk() != null && night.astronomicalDawn() != null) {
-                Instant h = night.astronomicalDusk().truncatedTo(ChronoUnit.HOURS);
-                if (h.isBefore(night.astronomicalDusk())) h = h.plus(1, ChronoUnit.HOURS);
-                for (; !h.isAfter(night.astronomicalDawn()); h = h.plus(1, ChronoUnit.HOURS)) {
-                    Map<String, Double> v = series.get(h);
-                    if (v == null || v.get("SKY") == null || v.get("PTY") == null) continue;
-                    int sky = (int) Math.round(v.get("SKY")), pty = (int) Math.round(v.get("PTY"));
-                    if (sky != 1 && sky != 3 && sky != 4) continue;
-                    double fMoon = AstroCalculator.moonFactorOverHour(h, r.getLat(), r.getLon());
-                    dark.add(new StarIndexCalculator.HourInput(h, sky, pty, fMoon, lightFactor));
-                }
+            for (Instant h : darkHours(night.astronomicalDusk(), night.astronomicalDawn())) {
+                Map<String, Double> v = series.get(h);
+                if (v == null || v.get("SKY") == null || v.get("PTY") == null) continue;
+                int sky = (int) Math.round(v.get("SKY")), pty = (int) Math.round(v.get("PTY"));
+                if (sky != 1 && sky != 3 && sky != 4) continue;
+                double fMoon = AstroCalculator.moonFactorOverHour(h, r.getLat(), r.getLon());
+                dark.add(new StarIndexCalculator.HourInput(h, sky, pty, fMoon, lightFactor));
             }
             var score = StarIndexCalculator.night(dark);
             out.add(new RegionNight(r, night, score, baseAt, seriesStart, series));

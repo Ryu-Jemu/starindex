@@ -21,8 +21,8 @@ import java.util.Set;
  * then completeness decides.
  * <p>Fail fast when data.go.kr cannot be reached at all: if the first {@link #UNREACHABLE_AFTER} cells all fail with a
  * connection error and none has succeeded, the run stops. data.go.kr refuses some overseas addresses (GitHub-hosted
- * runners), and without this a blocked runner spends ~5 minutes retrying 17 cells; the workflow retries on a fresh
- * runner instead (ADR-017).
+ * runners), and without this a blocked runner spends ~5 minutes retrying 17 cells. The batch CLI then exits with
+ * {@link EtlJobListener#EXIT_UNREACHABLE} and the workflow retries on a fresh runner instead (ADR-017).
  */
 @Service
 public class ForecastIngestService {
@@ -78,7 +78,7 @@ public class ForecastIngestService {
                 failures.add(c.nx() + "," + c.ny() + " " + e.kind() + (e.code() == null ? "" : " " + e.code()));
                 if (ok == 0 && failures.size() >= UNREACHABLE_AFTER
                         && failures.stream().allMatch(f -> f.endsWith(" " + DataGoKrException.Kind.IO.name())))
-                    throw new EtlStopException("data.go.kr에 연결할 수 없습니다(처음 " + failures.size()
+                    throw new DataGoKrUnreachableException("data.go.kr에 연결할 수 없습니다(처음 " + failures.size()
                             + "개 격자 모두 통신 오류). 이 실행 환경의 IP가 막혔을 수 있습니다: " + failures, e);
             }
         }

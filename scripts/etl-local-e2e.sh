@@ -39,11 +39,16 @@ run() {  # the workflow's java line, with local stand-ins for Neon and data.go.k
   java -Xmx512m -XX:+UseSerialGC -Duser.timezone=Asia/Seoul -jar "$jar" \
     --spring.main.web-application-type=none --spring.main.banner-mode=off \
     --spring.batch.job.enabled=true --spring.batch.job.name="$1" \
-    --starindex.data-go-kr.base-url=http://127.0.0.1:18089 \
+    --starindex.data-go-kr.base-url="${DATA_GO_KR_BASE:-http://127.0.0.1:18089}" \
     --logging.level.root=WARN --logging.level.ETL=INFO --logging.level.dev.starindex.etl.AstroService=ERROR \
     --logging.level.org.springframework.batch.core.step.AbstractStep=OFF "run.at=$(date +%s%3N)" "${@:2}"
 }
 run forecastPipelineJob
 run astroDailyJob
 python3 "$here/scripts/check-public-pack.py" "$endpoint/$bucket" --max-age-min 360
-echo "OK: ETL → bucket → anonymous read. Simulator: STARINDEX_PACK_BASE_URL=$endpoint/$bucket"
+# A runner data.go.kr refuses (here: a closed port, every call a connection error) must exit 75, the code the workflow
+# retries on a fresh runner; retentionJob (Neon only) is what its last attempt still runs.
+rc=0; DATA_GO_KR_BASE=http://127.0.0.1:9 run forecastPipelineJob >/dev/null 2>&1 || rc=$?
+[ "$rc" = 75 ] || { echo "data.go.kr unreachable: expected exit 75, got $rc" >&2; exit 1; }
+run retentionJob
+echo "OK: ETL → bucket → anonymous read, unreachable data.go.kr → exit 75. Simulator: STARINDEX_PACK_BASE_URL=$endpoint/$bucket"

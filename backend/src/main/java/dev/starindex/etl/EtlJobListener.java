@@ -6,9 +6,17 @@ import org.springframework.batch.core.job.JobExecution;
 import org.springframework.batch.core.listener.JobExecutionListener;
 import org.springframework.batch.core.step.StepExecution;
 
-/** Prints one readable block per job run: each step's status and summary, and the reason when it failed. */
+/**
+ * Prints one readable block per job run: each step's status and summary, and the reason when it failed. Also remembers
+ * whether a run stopped because data.go.kr was unreachable, for the batch CLI's exit code.
+ */
 public class EtlJobListener implements JobExecutionListener {
     private static final Logger log = LoggerFactory.getLogger("ETL");
+
+    /** Batch CLI exit code for "data.go.kr unreachable from here, try elsewhere" (sysexits EX_TEMPFAIL). */
+    public static final int EXIT_UNREACHABLE = 75;
+
+    private volatile boolean unreachable;
 
     @Override
     public void afterJob(JobExecution je) {
@@ -22,9 +30,15 @@ public class EtlJobListener implements JobExecutionListener {
         for (Throwable t : je.getAllFailureExceptions()) {
             Throwable root = t;
             while (!(root instanceof EtlStopException) && root.getCause() != null) root = root.getCause();
+            if (root instanceof DataGoKrUnreachableException) unreachable = true;
             sb.append("\n  ! ").append(root instanceof EtlStopException ? root.getMessage() : t.toString());
         }
         if (je.getStatus().isUnsuccessful()) log.warn(sb.toString());
         else log.info(sb.toString());
+    }
+
+    /** True once a job in this JVM failed because data.go.kr could not be reached at all. */
+    public boolean sawUnreachable() {
+        return unreachable;
     }
 }

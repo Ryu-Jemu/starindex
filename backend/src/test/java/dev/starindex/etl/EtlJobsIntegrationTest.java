@@ -66,6 +66,9 @@ class EtlJobsIntegrationTest extends IntegrationTestBase {
     @Autowired @Qualifier("astroDailyJob") Job astroDailyJob;
     @Autowired @Qualifier("astroEventsJob") Job astroEventsJob;
     @Autowired @Qualifier("apiKeyCheckJob") Job apiKeyCheckJob;
+    @Autowired @Qualifier("retentionJob") Job retentionJob;
+    @Autowired EtlJobListener listener;
+    @Autowired java.time.Clock clock;
 
     @BeforeEach
     void clean() throws java.io.IOException {
@@ -86,6 +89,11 @@ class EtlJobsIntegrationTest extends IntegrationTestBase {
 
     static String failures(JobExecution e) {
         return e.getAllFailureExceptions().stream().map(Throwable::getMessage).collect(Collectors.joining(" | "));
+    }
+
+    static boolean unreachable(Throwable t) {
+        for (; t != null; t = t.getCause()) if (t instanceof DataGoKrUnreachableException) return true;
+        return false;
     }
 
     int count(String table) { return jdbc.queryForObject("SELECT COUNT(*) FROM " + table, Integer.class); }
@@ -196,10 +204,24 @@ class EtlJobsIntegrationTest extends IntegrationTestBase {
         JobExecution e = run(forecastPipelineJob, "base", "202610121700", "nightDate", "2026-10-12");
         assertEquals(BatchStatus.FAILED, e.getStatus());
         assertTrue(failures(e).contains("data.go.kr에 연결할 수 없습니다"), failures(e));
+        assertTrue(e.getAllFailureExceptions().stream().anyMatch(EtlJobsIntegrationTest::unreachable), failures(e));
+        assertTrue(listener.sawUnreachable(), "the batch CLI exits 75 and the workflow retries on a fresh runner");
         long cellsTried = WM.getAllServeEvents().stream()
                 .map(ev -> ev.getRequest().queryParameter("nx").firstValue() + "," + ev.getRequest().queryParameter("ny").firstValue())
                 .distinct().count();
         assertEquals(ForecastIngestService.UNREACHABLE_AFTER, cellsTried, "stopped early instead of trying all 17 cells");
+    }
+
+    @Test
+    void retentionJobPurgesWithoutCallingDataGoKr() throws Exception {
+        // What the workflow's last attempt still runs when data.go.kr stays unreachable (ADR-017, ADR-018).
+        var now = java.time.OffsetDateTime.ofInstant(clock.instant(), java.time.ZoneOffset.UTC);
+        jdbc.update("INSERT INTO kma_forecast_hour (nx, ny, fcst_at, base_at, sky) VALUES (60, 127, ?, ?, 1), (60, 127, ?, ?, 1)",
+                now.minusHours(13), now.minusHours(20), now.plusHours(3), now.minusHours(1));
+        JobExecution e = run(retentionJob);
+        assertEquals(BatchStatus.COMPLETED, e.getStatus(), failures(e));
+        assertEquals(1, count("kma_forecast_hour"), "the hour 13 h past is gone, the coming one stays");
+        assertEquals(0, WM.getAllServeEvents().size(), "no data.go.kr call");
     }
 
     @Test
@@ -310,7 +332,8 @@ class EtlJobsIntegrationTest extends IntegrationTestBase {
         WM.stubFor(get(urlPathEqualTo("/B090041/openapi/service/RiseSetInfoService/getLCRiseSetInfo"))
                 .willReturn(aResponse().withHeader("Content-Type", "application/xml").withBody(
                         Fixtures.riseSet("{{request.query.locdate}}", "테스트", "{{request.query.latitude}}", "{{request.query.longitude}}", null, null))));
-        var now = java.time.Instant.now();
+        // The pinned clock retention uses, not the wall clock: wall-clock rows would stop being old enough on 10-19.
+        var now = clock.instant();
         for (int i = 0; i < 4; i++) {   // four old index packs: only the oldest falls outside the newest three
             String path = "packs/index/old" + i + "/index.json.gz";
             packStore.put(path, new byte[]{1}, "application/gzip", PackStore.IMMUTABLE);

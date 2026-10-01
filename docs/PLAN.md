@@ -179,10 +179,12 @@ docs/       adr/, ATTRIBUTION.md, review-notes.md, verification/, demo-script.md
   - 기여도: 강수면 '관측 불가', 모든 f=1이면 0, 그 밖에는 `ln f_i/Σln f_j`
   - 밤 날짜 = 06:00 KST에 바뀐다(ADR-018. 그 전에는 12:00)
   - **계산 규칙(ADR-019, 결과를 정하는 세부)**
-    - 시간 칸: 정각 h의 예보는 [h, h+1시간)을 대표한다. 어두운 시간은 천문박명 끝 ≤ h ≤ 새벽 천문박명 시작인 정각이다.
-    - 달: 그 1시간의 f_moon 평균이다. 10분 칸 6개의 가운데(:05, :15, …, :55)에서 Astronomy Engine 지형 기준 고도(대기굴절 Normal, 관측 고도 0m)와 밝은 면 비율 k로 계산한다.
+    - 시간 칸: 정각 h의 예보는 [h, h+1시간)을 대표한다. 어두운 시간은 이 칸 전체가 천문학적 밤 안에 드는 정각이다: 천문박명 끝 ≤ h 이고 h+1시간 ≤ 새벽 천문박명 시작(10-01 수정. 전에는 h ≤ 새벽 천문박명 시작이라 마지막 칸이 최대 59분 박명이었다).
+    - 박명 시각: 지수는 Astronomy Engine 계산값을 초 단위 그대로 쓴다(태양 기하 고도 −18°, 관측 고도 0m). 저녁 사건은 밤 날짜 12:00 KST부터, 아침 사건은 천문박명 끝부터 찾는다. 천문연 값은 팩의 표시용이다.
+    - 달: 그 1시간의 f_moon 평균이다. 10분 칸 6개의 가운데(:05, :15, …, :55)에서 Astronomy Engine 지형 기준 고도(대기굴절 Normal, 관측 고도 0m)와 밝은 면 비율 k를 각각 계산한다.
     - 창: 정확히 1시간 간격인 두 칸이다. 예보가 빈 시간은 창을 끊는다. 이런 쌍이 하나도 없으면 가장 좋은 한 칸을 쓴다. 같은 값이면 이른 창을 쓴다.
-    - 반올림: 시간별 원점수의 창 평균을 한 번만 반올림한다. 시간별 정수는 표시용이다.
+    - 반올림: 시간별 원점수의 창 평균을 한 번만 반올림한다(0.5는 올림). 시간별 정수는 표시용이다.
+    - 기여도: 창 안에 PTY>0이 있으면 `{cloud 0, precip 1, moon 0, light 0}`(앱은 '관측 불가'로 표시). 그 밖에는 인자마다 창 평균 f_i를 구해 `ln f_i/Σln f_j`를 소수 셋째 자리로 반올림한다. 모든 f=1이면 모두 0이다.
     - 이유 코드: `PRECIP`(창 안 PTY>0), 창의 가장 나쁜 SKY에 따라 `CLOUD_CLEAR`/`CLOUD_MOSTLY`/`CLOUD_OVERCAST`, 창의 평균 f_moon에 따라 `MOON_NONE`(≥0.95)/`MOON_SOME`(≥0.7)/`MOON_BRIGHT`. 예보가 없으면 `NO_FORECAST`.
     - 등급: 80 이상 `EXCELLENT`, 60 이상 `GOOD`, 40 이상 `FAIR`, 그 밖 `POOR`(SERVICE-PLAN 4.5 판정 문구와 같은 경계)
 - **팩 스키마**: 규범은 실제로 발행되는 **schema 2**이고, 기준 파일은 `contracts/golden/index-pack-v2.json`(백엔드 골든 테스트와 iOS 디코더 테스트가 같은 파일을 검사)이다. 지역마다 `id, name, kind, grid, score, grade, best:[HHmm,HHmm], reasons, contrib, twilight:{kasi:{sunset,civile,naute,aste}|null, computed:{sunset,civile,naute,aste,astm,sunrise}}, hourly:{t0, sky, pty, tmp, reh, wsd, pop}`(72칸, 1시간 간격)를 둔다. 시각은 KST HHmm이고 가장 가까운 분으로 반올림한다(ADR-019). 앱은 천문연 값을 "(천문연)"으로 보여 주고, 없으면 계산값을 "(계산)"으로 보여 준다. (이전 "팩 스키마 v1"의 지역 최상위 `kasi`와 `hourly:{t0, sky, pty}`는 schema 2로 대체됐다.)

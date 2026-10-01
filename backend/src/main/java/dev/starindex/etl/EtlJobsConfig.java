@@ -237,6 +237,15 @@ public class EtlJobsConfig {
                 .start(serviceKeyRequiredStep).next(forecastFetchStep).next(indexPublishStep).next(retentionStep).build();
     }
 
+    /**
+     * Retention alone (Neon only, no data.go.kr): the workflow's last attempt runs it when data.go.kr stays unreachable,
+     * so collected data still does not outlive its 12 hours (ADR-018).
+     */
+    @Bean
+    Job retentionJob(JobRepository repo, Step retentionStep, EtlJobListener l) {
+        return new JobBuilder("retentionJob", repo).listener(l).start(retentionStep).build();
+    }
+
     @Bean
     Job astroDailyJob(JobRepository repo, Step retentionStep, JobExecutionDecider serviceKeyDecider,
                       Step kasiRiseSetStep, Step crosscheckStep, EtlJobListener l) {
