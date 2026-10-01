@@ -190,4 +190,62 @@ public final class AstroEngine: Sendable {
             return r.status == ASTRO_SUCCESS ? Self.date(r.time) : nil
         }
     }
+
+    /// Rise, upper culmination and set inside `[date, date + windowDays]` for a body or a fixed star.
+    ///
+    /// One lock section for the whole search: a fixed star goes through AE's global `BODY_STAR1` slot, which
+    /// another thread's `DefineStar` must not overwrite between the definition and the three searches.
+    /// Rise/set follow AE's `SearchRiseSetEx` convention (upper limb, standard refraction, flat horizon).
+    /// Returns nil only on an unexpected AE error (invalid coordinates, internal failure).
+    public func riseTransitSet(_ target: SkyTarget, observer: ObserverLocation, after date: Date,
+                               windowDays: Double = 1.0) -> RiseTransitSet? {
+        lock.withLock { () -> RiseTransitSet? in
+            let body: astro_body_t
+            switch target {
+            case .body(let b):
+                body = b.cBody
+            case .star(let ra, let dec):
+                guard ra.isFinite, dec.isFinite, (-90...90).contains(dec) else { return nil }
+                let ra24 = ra.truncatingRemainder(dividingBy: 24) + (ra < 0 ? 24 : 0)
+                guard Astronomy_DefineStar(BODY_STAR1, ra24 >= 24 ? 0 : ra24, dec, 1000.0) == ASTRO_SUCCESS else { return nil }
+                body = BODY_STAR1
+            }
+            let obs = observer.cObserver
+            var t = Self.astroTime(date)
+
+            func event(_ direction: astro_direction_t) -> (ok: Bool, date: Date?) {
+                let r = Astronomy_SearchRiseSetEx(body, obs, direction, t, windowDays, 0.0)
+                if r.status == ASTRO_SUCCESS { return (true, Self.date(r.time)) }
+                return (r.status == ASTRO_SEARCH_FAILURE, nil)      // not in the window vs. a real error
+            }
+            let rise = event(DIRECTION_RISE), set = event(DIRECTION_SET)
+            guard rise.ok, set.ok else { return nil }
+
+            let ha = Astronomy_SearchHourAngleEx(body, obs, 0.0, t, +1)
+            guard ha.status == ASTRO_SUCCESS else { return nil }
+            let inWindow = ha.time.ut <= t.ut + windowDays
+            let transit = inWindow ? Self.date(ha.time) : nil
+
+            let visibility: RiseTransitSet.Visibility
+            if rise.date != nil || set.date != nil {
+                visibility = .risesAndSets
+            } else {
+                // No crossing for the whole window: the body stays on the side of the horizon it is on now.
+                // Same criterion as AE's rise/set search: geometric altitude of the upper limb vs. −34′.
+                let eq = Astronomy_Equator(body, &t, obs, EQUATOR_OF_DATE, ABERRATION)
+                guard eq.status == ASTRO_SUCCESS else { return nil }
+                let alt = Astronomy_Horizon(&t, obs, eq.ra, eq.dec, REFRACTION_NONE).altitude
+                let radiusKm: Double = switch target {
+                case .body(.sun): SUN_RADIUS_KM
+                case .body(.moon): MOON_EQUATORIAL_RADIUS_KM
+                default: 0
+                }
+                let limb = eq.dist > 0 ? asin(min(1, radiusKm / KM_PER_AU / eq.dist)) * 180 / .pi : 0
+                visibility = alt + limb > -34.0 / 60.0 ? .alwaysUp : .neverUp
+            }
+            return RiseTransitSet(rise: rise.date, transit: transit,
+                                  transitAltitudeDeg: inWindow ? ha.hor.altitude : nil,
+                                  set: set.date, visibility: visibility)
+        }
+    }
 }

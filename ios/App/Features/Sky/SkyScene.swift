@@ -64,7 +64,12 @@ final class SkyScene {
 
     /// Launch arguments (only a developer can pass them, e.g. with `devicectl`):
     /// - `-diag`: diagnostics panel + stderr log (G3/G5). Also in Release, so G5 is measured with optimization.
-    /// - DEBUG only, for screenshots and demo rehearsal: `-look <az>,<alt>` (manual view), `-fov <deg>`, `-playSunset`.
+    /// - DEBUG only, for screenshots and demo rehearsal: `-look <az>,<alt>` (manual view), `-fov <deg>`, `-playSunset`,
+    ///   `-select <name>` (open the detail sheet: a body as `saturn` or `토성`, a star by its catalog name such as
+    ///   `Sirius`, a constellation by abbreviation such as `Ori`).
+    /// - DEBUG only, handled by `IndexStore.applyLaunchArguments`: `-openIndexSheet` (open the index sheet, large),
+    ///   `-indexNow <ISO-8601>` (evaluate the chip's "tonight"/staleness at that instant, e.g. for the golden pack
+    ///   `2026-10-12T21:00+09:00`; the sky itself stays live).
     func applyLaunchArguments(_ args: [String] = ProcessInfo.processInfo.arguments) {
         if args.contains("-diag") {
             diagnostics.showsPanel = true
@@ -83,7 +88,18 @@ final class SkyScene {
         }
         if let fov = value(after: "-fov").flatMap(Double.init) { fovDeg = min(100, max(20, fov)) }
         if args.contains("-playSunset") { playSunset() }
+        if let name = value(after: "-select") { selected = objectRef(named: name) }
         #endif
+    }
+
+    /// Body by English or Korean name, star by catalog name, constellation by abbreviation or Korean name.
+    func objectRef(named name: String) -> SkyObjectRef? {
+        if let b = SkyBody.allCases.first(where: { $0.rawValue == name.lowercased() || $0.nameKo == name }) { return .body(b) }
+        if let i = catalog.stars.firstIndex(where: { $0.name?.caseInsensitiveCompare(name) == .orderedSame }) { return .star(i) }
+        if let i = catalog.constellations.firstIndex(where: { $0.abbr.caseInsensitiveCompare(name) == .orderedSame || $0.nameKo == name }) {
+            return .constellation(i)
+        }
+        return nil
     }
 
     func activate() {
@@ -176,6 +192,16 @@ final class SkyScene {
         lastFrame = frame
         diagnostics.recordFrame(uptime: uptime, startNs: t0, buildMs: Double(DispatchTime.now().uptimeNanoseconds - t0) / 1e6)
         return (frame, snapshot)
+    }
+
+    /// The sky as currently drawn, for the detail sheet. Unlike `frame(...)` it has no side effects: it neither
+    /// replaces `lastFrame` (tap hit-testing would then use a 1×1 viewport) nor feeds the G5 diagnostics.
+    /// Live, the ≤1 s old snapshot is reused; during playback (simulated time runs ×300–×850) one is built
+    /// for the current simulated instant.
+    func snapshotForDetails(now: Date = Date(), uptime: TimeInterval = ProcessInfo.processInfo.systemUptime) -> SkySnapshot {
+        let t = clock.date(atUptime: uptime, wallNow: now).date
+        if snapshot.observer == observer, abs(snapshot.date.timeIntervalSince(t)) <= 1 { return snapshot }
+        return SkySnapshot.build(catalog: catalog, date: t, observer: observer)
     }
 
     private func currentTransform() -> FrameTransform {

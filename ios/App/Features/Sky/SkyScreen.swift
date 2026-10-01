@@ -5,6 +5,9 @@ import SkySensors
 /// First screen: the sky around the user, following the phone's orientation (plan 4.0).
 struct SkyScreen: View {
     @State private var scene = SkyScene()
+    @State private var index = IndexStore()
+    @State private var showsIndexSheet = false
+    @State private var indexSheetDetent: PresentationDetent = .medium
     @State private var lastDrag: CGSize = .zero
     @State private var pinchBase: Double?
     @Environment(\.scenePhase) private var scenePhase
@@ -19,7 +22,7 @@ struct SkyScreen: View {
                         SkyRenderer.draw(frame, in: &ctx)
                         scene.diagnostics.recordDraw(ms: Double(DispatchTime.now().uptimeNanoseconds - t0) / 1e6)
                     }
-                    SkyHUD(scene: scene, frame: frame, snapshot: snap)
+                    SkyHUD(scene: scene, frame: frame, snapshot: snap, index: index) { showsIndexSheet = true }
                     if scene.diagnostics.showsPanel { DiagnosticsPanel(text: scene.diagnostics.text) }
                 }
             }
@@ -27,23 +30,38 @@ struct SkyScreen: View {
             .gesture(dragGesture(size: geo.size))
             .simultaneousGesture(pinchGesture)
             .onTapGesture { p in scene.selected = scene.hitTest(p) }
+            // Attached here, not next to the object sheet below: one presentation modifier per view level.
+            .sheet(isPresented: $showsIndexSheet) {
+                IndexSheet(store: index, observer: scene.observer, observerIsDefault: scene.observerIsDefault)
+                    .presentationDetents([.medium, .large], selection: $indexSheetDetent)
+            }
         }
         .ignoresSafeArea()
         .sheet(item: Binding(get: { scene.selected.map(Selection.init) }, set: { scene.selected = $0?.ref })) { sel in
             ObjectDetailSheet(scene: scene, ref: sel.ref)
-                .presentationDetents([.fraction(0.32), .medium])
+                .presentationDetents([.medium, .large])
         }
         .task { prewarmShader() }
         .onAppear {
             scene.activate()
+            index.activate()
             scene.applyLaunchArguments()
+            if index.applyLaunchArguments() {
+                indexSheetDetent = .large          // whole sheet, attribution included, in one screenshot
+                showsIndexSheet = true
+            }
         }
         .onChange(of: scenePhase) { _, phase in
             // Only `.background` stops the sensors: `.inactive` also covers system alerts (the location
             // prompt), Control Center and the notification shade, where the sky should keep following the phone.
+            // The index refreshes on every activation and polls only while active (no background network use).
             switch phase {
-            case .active: scene.activate()
-            case .background: scene.deactivate()
+            case .active:
+                scene.activate()
+                index.activate()
+            case .background:
+                scene.deactivate()
+                index.deactivate()
             default: break
             }
         }
@@ -141,6 +159,8 @@ struct SkyHUD: View {
     let scene: SkyScene
     let frame: SkyFrame
     let snapshot: SkySnapshot
+    let index: IndexStore
+    let openIndex: () -> Void
 
     var body: some View {
         VStack(spacing: 10) {
@@ -155,10 +175,8 @@ struct SkyHUD: View {
                         d.logsToConsole = d.showsPanel
                     }
                     #endif
-                HStack(spacing: 8) {
-                    chip("오늘 밤 지수 · ETL 연결 예정", systemImage: "sparkles")
-                    if scene.observerIsDefault { chip("서울(기본 위치)", systemImage: "location.slash") }
-                }
+                IndexChip(store: index, observer: scene.observer, observerIsDefault: scene.observerIsDefault, action: openIndex)
+                if scene.observerIsDefault { chip("서울(기본 위치)", systemImage: "location.slash") }
                 if scene.isPlaying {
                     chip("재생 중 · " + snapshot.date.formatted(date: .omitted, time: .shortened), systemImage: "clock.arrow.circlepath")
                 }

@@ -46,6 +46,17 @@ targets:
         NSLocationDefaultAccuracyReduced: true
         NSMotionUsageDescription: "폰을 드는 방향에 맞춰 하늘을 보여 주기 위해 기기의 방향 센서를 사용합니다."
         ITSAppUsesNonExemptEncryption: false
+        # Index pack root: the Neon Object Storage public bucket URL including the bucket name (ADR-017), so the
+        # manifest is <base>/packs/manifest/latest.json. Set per configuration below;
+        # empty → the chip shows "지수 서버 미설정". Only static files are downloaded; no location is sent (D4).
+        StarIndexPackBaseURL: $(STARINDEX_PACK_BASE_URL)
+        # ATS: XcodeGen writes ONE Info.plist for all configurations, so the Debug-only need (the simulator talks
+        # to scripts/serve-packs.sh over plain HTTP on 127.0.0.1) is met with NSAllowsLocalNetworking alone.
+        # It lifts ATS only for local addresses (loopback, unqualified and .local names), never for Internet
+        # hosts, and needs no App Review justification (unlike NSAllowsArbitraryLoads). Release stays strict in
+        # code as well: IndexStore rejects a non-https base URL outside DEBUG.
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.ryujemu.starindex
@@ -53,3 +64,11 @@ targets:
         INFOPLIST_KEY_UIStatusBarHidden: YES
         ENABLE_USER_SCRIPT_SANDBOXING: YES
         SWIFT_STRICT_CONCURRENCY: complete
+      configs:
+        # Debug: scripts/serve-packs.sh on the Mac (reachable from the simulator only).
+        Debug:
+          STARINDEX_PACK_BASE_URL: "http://127.0.0.1:8090"
+        # Release: the public bucket, https://<branch-id>.storage.c-<N>.<region>.aws.neon.tech/<bucket>, filled in
+        # once the bucket exists (docs/ETL.md "무과금 운영").
+        Release:
+          STARINDEX_PACK_BASE_URL: ""
