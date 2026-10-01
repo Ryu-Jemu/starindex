@@ -8,8 +8,14 @@ die() { echo "$*" >&2; exit 1; }
 
 ssm() { aws ssm get-parameter --region "$AWS_REGION" --with-decryption --name "$1" --query Parameter.Value --output text; }
 
-# The EnvironmentFile is systemd syntax (unquoted values with spaces), so it is read, not sourced.
-env_get() { [ -r "$APP_ENV" ] || die "cannot read $APP_ENV"; sed -n "s/^$1=//p" "$APP_ENV" | tail -1; }
+# A value comes from the environment when systemd already exported it (EnvironmentFile of the unit), otherwise from
+# the file. The file is systemd syntax (unquoted values with spaces), so it is read, not sourced.
+env_get() {
+  local v="${!1-}"
+  if [ -n "$v" ]; then printf '%s\n' "$v"; return; fi
+  [ -r "$APP_ENV" ] || die "cannot read $APP_ENV (install.sh makes it root:starindex 0640)"
+  sed -n "s/^$1=//p" "$APP_ENV" | tail -1
+}
 
 # DB_URL=jdbc:postgresql://host[:port]/db[?sslmode=…] → PGHOST PGPORT PGDATABASE [PGSSLMODE]; PGUSER, PGPASSWORD.
 load_db_env() {
@@ -32,5 +38,13 @@ load_db_env() {
 as_postgres() {
   runuser -u postgres -- env -u PGHOST -u PGPORT -u PGDATABASE -u PGUSER -u PGPASSWORD -u PGSSLMODE "$@"
 }
+
+# Run psql as postgres on an SQL file that root opens: works even when the checkout is in a 0700 home directory.
+psql_postgres_file() {  # psql_postgres_file <file> [psql args…]
+  local file="$1"; shift
+  as_postgres psql -v ON_ERROR_STOP=1 -q "$@" < "$file"
+}
+
+db_exists() { [ "$(as_postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname = '$1'")" = 1 ]; }
 
 is_local_db() { [ "$PGHOST" = 127.0.0.1 ] || [ "$PGHOST" = localhost ] || [ "$PGHOST" = "::1" ]; }

@@ -3,12 +3,17 @@ package dev.starindex.pack;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.DirectoryNotEmptyException;
+import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
+import java.nio.file.SimpleFileVisitor;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.BasicFileAttributes;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
-import java.util.stream.Stream;
 
 /** Writes packs under a local directory; each file is written to a temp file and moved atomically. */
 public class LocalPackStore implements PackStore {
@@ -66,22 +71,36 @@ public class LocalPackStore implements PackStore {
         }
     }
 
+    /**
+     * A file that disappears during the walk (a publish moving its temp file into place) is skipped, not an error:
+     * the modification time comes from the attributes read with the directory entry, never from a second stat.
+     */
     @Override
     public List<Entry> list(String prefix) {
         Path start = resolve(prefix);
         if (!Files.isDirectory(start)) return List.of();
-        try (Stream<Path> walk = Files.walk(start)) {
-            return walk.filter(Files::isRegularFile).map(f -> {
-                try {
-                    return new Entry(root.relativize(f).toString().replace(f.getFileSystem().getSeparator(), "/"),
-                            Files.getLastModifiedTime(f).toInstant());
-                } catch (IOException e) {
-                    throw new UncheckedIOException(e);
+        List<Entry> out = new ArrayList<>();
+        try {
+            Files.walkFileTree(start, new SimpleFileVisitor<>() {
+                @Override
+                public FileVisitResult visitFile(Path f, BasicFileAttributes attrs) {
+                    if (attrs.isRegularFile())
+                        out.add(new Entry(root.relativize(f).toString().replace(f.getFileSystem().getSeparator(), "/"),
+                                attrs.lastModifiedTime().toInstant()));
+                    return FileVisitResult.CONTINUE;
                 }
-            }).sorted(java.util.Comparator.comparing(Entry::path)).toList();
+
+                @Override
+                public FileVisitResult visitFileFailed(Path f, IOException e) throws IOException {
+                    if (e instanceof NoSuchFileException) return FileVisitResult.CONTINUE;
+                    throw e;
+                }
+            });
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
+        out.sort(Comparator.comparing(Entry::path));
+        return out;
     }
 
     @Override

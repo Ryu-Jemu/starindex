@@ -11,6 +11,7 @@ deploy="$(dirname "$here")"
 # shellcheck source=lib.sh
 . "$here/lib.sh"
 PGDATA=/var/lib/pgsql/data
+[ -f "$APP_ENV" ] || die "create $APP_ENV first: copy deploy/app/app.env.example and set S3_BUCKET"
 
 echo "== packages"
 dnf -y -q install postgresql18-server postgresql18
@@ -19,6 +20,8 @@ echo "== app user and directories"
 id starindex >/dev/null 2>&1 || useradd --system --home-dir /var/lib/starindex --shell /sbin/nologin starindex
 install -d -o starindex -g starindex -m 750 /var/lib/starindex /var/log/starindex
 install -d -m 755 /opt/starindex /opt/starindex/postgres
+# No secrets inside, but the backup timer runs as starindex and reads it.
+chown root:starindex "$APP_ENV" && chmod 640 "$APP_ENV"
 
 echo "== cluster (locale C, UTF8)"
 # postgresql-setup refuses to run while systemd reports NeedDaemonReload=yes (e.g. right after the package install).
@@ -30,11 +33,11 @@ install -o postgres -g postgres -m 600 "$here/pg_hba.conf" "$PGDATA/pg_hba.conf"
 # No OOM drop-in: the AL2023 unit already sets OOMScoreAdjust=-1000 for the postmaster and PG_OOM_ADJUST_VALUE=0 for
 # backends (verified), which is stronger than the -900 DB-PLAN 5.2 planned. Under pressure the JVM goes first.
 systemctl enable --now postgresql
-runuser -u postgres -- psql -v ON_ERROR_STOP=1 -q -f "$here/tune.sql"
+psql_postgres_file "$here/tune.sql"
 systemctl restart postgresql
 
 echo "== role and database"
-runuser -u postgres -- psql -v ON_ERROR_STOP=1 -q -v dbname=starindex -f "$here/create-db.sql"
+psql_postgres_file "$here/create-db.sql" -v dbname=starindex
 pw="$(ssm /starindex/db/password)" || die "create the SSM SecureString /starindex/db/password first (openssl rand -base64 32)"
 [ -n "$pw" ] || die "/starindex/db/password is empty"
 # stdin only: the password never appears in argv or the shell history

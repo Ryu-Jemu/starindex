@@ -2,15 +2,27 @@
   "Version": "2012-10-17",
   "Statement": [
     {
+      "Sid": "DeployRevisions",
+      "Effect": "Allow",
+      "Action": "s3:GetObject",
+      "Resource": "arn:aws:s3:::starindex-ACCOUNT_ID/deploy/backend/*"
+    },
+    {
       "Sid": "DbBackups",
       "Effect": "Allow",
-      "Action": ["s3:PutObject", "s3:GetObject"],
+      "Action": [
+        "s3:PutObject",
+        "s3:GetObject"
+      ],
       "Resource": "arn:aws:s3:::starindex-ACCOUNT_ID/backup/db/*"
     },
     {
       "Sid": "Packs",
       "Effect": "Allow",
-      "Action": ["s3:PutObject", "s3:GetObject"],
+      "Action": [
+        "s3:PutObject",
+        "s3:GetObject"
+      ],
       "Resource": "arn:aws:s3:::starindex-ACCOUNT_ID/packs/*"
     },
     {
@@ -28,12 +40,22 @@
       "Effect": "Allow",
       "Action": "s3:ListBucket",
       "Resource": "arn:aws:s3:::starindex-ACCOUNT_ID",
-      "Condition": { "StringLike": { "s3:prefix": ["backup/db/*", "packs/*"] } }
+      "Condition": {
+        "StringLike": {
+          "s3:prefix": [
+            "backup/db/*",
+            "packs/*"
+          ]
+        }
+      }
     },
     {
       "Sid": "Secrets",
       "Effect": "Allow",
-      "Action": ["ssm:GetParameter", "ssm:GetParameters"],
+      "Action": [
+        "ssm:GetParameter",
+        "ssm:GetParameters"
+      ],
       "Resource": "arn:aws:ssm:ap-northeast-2:ACCOUNT_ID:parameter/starindex/*"
     },
     {
@@ -41,7 +63,11 @@
       "Effect": "Allow",
       "Action": "kms:Decrypt",
       "Resource": "*",
-      "Condition": { "StringEquals": { "kms:ViaService": "ssm.ap-northeast-2.amazonaws.com" } }
+      "Condition": {
+        "StringEquals": {
+          "kms:ViaService": "ssm.ap-northeast-2.amazonaws.com"
+        }
+      }
     }
   ]
 }

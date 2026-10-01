@@ -11,22 +11,25 @@
 #
 # The key goes in backend/.env as DATA_GO_KR_SERVICE_KEY=<data.go.kr 일반 인증키 (Decoding)>; nothing else to set.
 # Packs are written to backend/build/packs (PACK_LOCAL_DIR). Exit code: 0 = COMPLETED, non-zero = FAILED.
-# JAVA_OPTS is passed to java (e.g. the EC2 line of deploy/app/app.env.example).
+# JAVA_OPTS is passed to java (e.g. the EC2 line of deploy/app/app.env.example). STARINDEX_EC2SIM=1 keeps the
+# containers under the EC2 limits of docker-compose.ec2sim.yml (scripts/ec2sim.sh).
 set -euo pipefail
 
-usage() { sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+usage() { sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 [ $# -ge 1 ] || usage
 
 here="$(cd "$(dirname "$0")/.." && pwd)"
+compose=(docker compose -f docker-compose.yml)
+[ "${STARINDEX_EC2SIM:-}" = 1 ] && compose+=(-f docker-compose.ec2sim.yml)
 
 # pin / unpin: retention never deletes a pinned pack (DB-PLAN 4.3). Local compose DB; on EC2 use deploy/postgres/pin.sh.
 if [ "$1" = pin ] || [ "$1" = unpin ]; then
   [ $# -eq 2 ] || { echo "usage: scripts/etl.sh $1 <pack version>" >&2; exit 2; }
   value=false; [ "$1" = pin ] && value=true
   cd "$here/backend"
-  docker compose -f docker-compose.yml up -d --wait postgres >/dev/null 2>&1
+  "${compose[@]}" up -d --wait postgres >/dev/null 2>&1
   out="$(printf "UPDATE data_pack SET pinned = %s WHERE version = :'version';\n" "$value" |
-    docker compose -f docker-compose.yml exec -T postgres psql -U starindex -d starindex -tA -v ON_ERROR_STOP=1 -v version="$2" -f - 2>&1)"
+    "${compose[@]}" exec -T postgres psql -U starindex -d starindex -tA -v ON_ERROR_STOP=1 -v version="$2" -f - 2>&1)"
   case "$out" in
     *"UPDATE 0"*) echo "no pack version $2 in data_pack" >&2; exit 1 ;;
     *"UPDATE "*)  echo "$1: $2" ;;
@@ -54,7 +57,7 @@ if ! docker info >/dev/null 2>&1; then
   echo "Docker is not running. Start Docker Desktop first (open -a Docker)." >&2
   exit 3
 fi
-docker compose -f docker-compose.yml up -d --wait postgres valkey >/dev/null
+"${compose[@]}" up -d --wait postgres valkey >/dev/null
 
 # Every launch is a new JobInstance: Spring Batch 6 ignores caller parameters when a job has an incrementer,
 # so the jobs have none and we pass a unique run.at here.

@@ -140,9 +140,10 @@ public class RetentionService {
         for (String p : jdbc.queryForList("SELECT path FROM data_pack", String.class)) keepDirs.add(dir(p));
         for (String p : currentPaths) keepDirs.add(dir(p));
         int files = 0;
-        for (PackStore.Entry e : store.list("packs/")) {
-            if (PACK_DIRS.stream().noneMatch(e.path()::startsWith) || keepDirs.contains(dir(e.path()))
-                    || !e.lastModified().isBefore(cutoff)) continue;
+        List<PackStore.Entry> stored = new ArrayList<>();
+        for (String prefix : PACK_DIRS) stored.addAll(store.list(prefix));   // never walks packs/manifest/
+        for (PackStore.Entry e : stored) {
+            if (keepDirs.contains(dir(e.path())) || !e.lastModified().isBefore(cutoff)) continue;
             try {
                 store.delete(e.path());
                 files++;

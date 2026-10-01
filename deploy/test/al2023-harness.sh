@@ -44,7 +44,21 @@ case "${pos[0]} ${pos[1]}" in
   *) echo "aws stand-in: unsupported $*" >&2; exit 2 ;;
 esac
 SH
-chmod 755 /usr/local/bin/systemctl /usr/local/bin/aws
+# psql/pg_restore stand-ins: log argv (secrets must never be there), pg_restore fails on demand (rollback test)
+cat > /usr/local/bin/psql <<'SH'
+#!/bin/bash
+printf '%s\n' "$*" >> /tmp/argv.log 2>/dev/null
+exec /usr/bin/psql "$@"
+SH
+cat > /usr/local/bin/pg_restore <<'SH'
+#!/bin/bash
+printf '%s\n' "$*" >> /tmp/argv.log 2>/dev/null
+if [ -f /tmp/fail-restore ] && [[ " $* " == *" -d "* ]]; then echo "pg_restore stand-in: forced failure" >&2; exit 1; fi
+exec /usr/bin/pg_restore "$@"
+SH
+sed -i 's#^args=("$@"); name=""; i=0#printf "%s\n" "$*" >> /tmp/argv.log 2>/dev/null\nargs=("$@"); name=""; i=0#' /usr/local/bin/aws
+chmod 755 /usr/local/bin/systemctl /usr/local/bin/aws /usr/local/bin/psql /usr/local/bin/pg_restore
+touch /tmp/argv.log && chmod 666 /tmp/argv.log
 touch /tmp/systemctl.log && chmod 666 /tmp/systemctl.log
 
 mkdir -p /etc/starindex
@@ -53,14 +67,18 @@ sed -e 's/^S3_BUCKET=$/S3_BUCKET=starindex-test/' -e 's/^ETL_SCHEDULE_ENABLED=tr
 
 echo "== install.sh (twice: idempotent)"
 check "install.sh first run" bash $R/deploy/postgres/install.sh > /tmp/install1.log 2>&1 || { tail -30 /tmp/install1.log; }
-check "install.sh second run" bash $R/deploy/postgres/install.sh > /tmp/install2.log 2>&1 || { tail -30 /tmp/install2.log; }
+# Second run from a checkout in a 0700 home directory: postgres cannot read files there, root must open them.
+mkdir -p /root/checkout && cp -R $R/deploy /root/checkout/ && chmod 700 /root /root/checkout
+check "install.sh second run from a 0700 home" bash /root/checkout/deploy/postgres/install.sh > /tmp/install2.log 2>&1 || { tail -30 /tmp/install2.log; }
+check "app.env root:starindex 0640" test "$(stat -c %U:%G:%a /etc/starindex/app.env)" = root:starindex:640
 tail -8 /tmp/install2.log
 check "locale C, utf8" test "$(runuser -u postgres -- psql -tAc "SELECT datcollate || '/' || pg_encoding_to_char(encoding) FROM pg_database WHERE datname='starindex'")" = "C/UTF8"
 check "listen localhost only" test "$(runuser -u postgres -- psql -tAc 'SHOW listen_addresses')" = localhost
 check "shared_buffers 128MB" test "$(runuser -u postgres -- psql -tAc 'SHOW shared_buffers')" = 128MB
 check "starindex is not superuser" test "$(runuser -u postgres -- psql -tAc "SELECT rolsuper FROM pg_roles WHERE rolname='starindex'")" = f
 check "password stored as SCRAM" test "$(runuser -u postgres -- psql -tAc "SELECT left(rolpassword, 13) FROM pg_authid WHERE rolname='starindex'")" = 'SCRAM-SHA-256'
-check "password never in argv/history" bash -c '! grep -rqF "$(cat /fake/ssm/starindex/db/password)" /tmp/install1.log /tmp/systemctl.log /root/.bash_history 2>/dev/null'
+check "argv log is recording" test -s /tmp/argv.log
+check "password never in argv or logs" bash -c '! grep -rqF "$(cat /fake/ssm/starindex/db/password)" /tmp/argv.log /tmp/install1.log /tmp/install2.log /tmp/systemctl.log'
 check "scripts installed" test -x /opt/starindex/postgres/backup.sh -a -x /opt/starindex/start.sh -a -f /etc/systemd/system/starindex-pgdump.timer
 check "backup timer enabled" grep -q "enable --now starindex-pgdump.timer" /tmp/systemctl.log
 check "peer auth for other local users refused" bash -c '! runuser -u starindex -- psql -h /var/run/postgresql -d postgres -tAc "select 1" >/dev/null 2>&1'
@@ -127,6 +145,20 @@ echo "== restore.sh into the live DB stops and starts the app"
 check "restore.sh live" bash /opt/starindex/postgres/restore.sh latest > /tmp/restore2.log 2>&1 || cat /tmp/restore2.log
 check "app stopped and started" bash -c 'grep -q "stop starindex" /tmp/systemctl.log && grep -q "start starindex" /tmp/systemctl.log'
 check "restore.sh refuses a bad name" bash -c '! bash /opt/starindex/postgres/restore.sh latest "x;drop" 2>/dev/null'
+check "restore.sh refuses other targets (postgres)" bash -c '! bash /opt/starindex/postgres/restore.sh latest postgres 2>/dev/null && test "$(runuser -u postgres -- psql -tAc "SELECT count(*) FROM pg_database WHERE datname='"'"'postgres'"'"'")" = 1'
+check "latest without backups explains itself" bash -c 'S3_BUCKET=empty-bucket bash /opt/starindex/postgres/restore.sh latest starindex_restoretest 2>&1 | grep -q "no backup in s3://empty-bucket"'
+printf 'not an archive\n' > /tmp/bad.dump
+stops_before=$(grep -c "stop starindex" /tmp/systemctl.log)
+check "invalid archive refused before touching anything" bash -c '! bash /opt/starindex/postgres/restore.sh /tmp/bad.dump 2>/tmp/restore-bad.log && grep -q "not a pg_dump archive" /tmp/restore-bad.log'
+check "invalid archive: app not stopped" test "$(grep -c "stop starindex" /tmp/systemctl.log)" = "$stops_before"
+check "invalid archive: live DB intact" test "$(runuser -u postgres -- psql -d starindex -tAc 'SELECT count(*) FROM region')" = 17
+touch /tmp/fail-restore
+starts_before=$(grep -c "start starindex" /tmp/systemctl.log)
+check "failed pg_restore exits non-zero" bash -c '! bash /opt/starindex/postgres/restore.sh latest > /tmp/restore-fail.log 2>&1'
+rm -f /tmp/fail-restore
+check "failed restore: previous live DB put back" test "$(runuser -u postgres -- psql -d starindex -tAc 'SELECT count(*) FROM region')" = 17
+check "failed restore: no _prev left" test "$(runuser -u postgres -- psql -tAc "SELECT count(*) FROM pg_database WHERE datname='"'"'starindex_prev'"'"'")" = 0
+check "failed restore: app started again" test "$(grep -c "start starindex" /tmp/systemctl.log)" -gt "$starts_before"
 
 echo "== RDS-like target: a fresh cluster where a NON-superuser master (CREATEROLE CREATEDB) runs create-db.sql (DB-PLAN 5.2, 5.7)"
 mkdir -p /tmp/rds && chown postgres /tmp/rds

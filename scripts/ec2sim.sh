@@ -6,9 +6,12 @@
 # 1. postgres/valkey recreated with the EC2 limits (docker-compose.ec2sim.yml); a throwaway DB starindex_ec2sim
 #    (the dev database is not touched).
 # 2. The app jar in a linux/arm64 JVM container (--cpus=2 --memory=1g) with the JAVA_OPTS of deploy/app/app.env.example
-#    plus Native Memory Tracking: server mode for the idle period, then stopped (NMT summary printed on exit).
-# 3. One JVM at a time, as on EC2: CLI pipeline ×3, publish, astro, events; then pg_dump.
-# 4. Report: peak memory per container, OOMKilled, Metaspace committed, max starindex connections.
+#    plus Native Memory Tracking, configured as in production: web server + scheduler, and one forecastPipelineJob run
+#    inside that JVM at start. Kept for the idle period, checked still running, then stopped (NMT printed on exit).
+# 3. Then CLI JVMs one at a time (EC2 runs one JVM; these exercise every job): pipeline ×3, publish, astro, events;
+#    then pg_dump.
+# 4. Report: peak memory per container, OOMKilled/exit codes, Metaspace committed, max starindex connections.
+#    Missing measurements count as failures.
 #    → backend/build/ec2sim/report.txt. Containers are recreated without limits at the end.
 set -euo pipefail
 
@@ -81,14 +84,19 @@ python3 "$here/scripts/ec2sim_stub.py" "$port" & stub_pid=$!
   done
 ) & sampler_pid=$!
 
-jvm() {  # jvm <container name> <java args…>
+jvm() {  # jvm <container name> [docker -e options… --] <java args…>
   local name="$1"; shift
+  local extra=()
+  if [[ " $* " == *" -- "* ]]; then
+    while [ "$1" != -- ]; do extra+=("$1"); shift; done
+    shift
+  fi
   # shellcheck disable=SC2086
-  docker run -d --name "$name" --platform linux/arm64 --cpus=2 --memory=1g --memory-swap=1g \
+  docker run -d --name "$name" --platform linux/arm64 --cpus=2 --memory=1g --memory-swap=1g ${extra[@]+"${extra[@]}"} \
     --network "$network" --add-host=host.docker.internal:host-gateway \
     -e MALLOC_ARENA_MAX="$malloc" -e TZ=UTC \
     -e DB_URL="jdbc:postgresql://$net_alias_db:5432/$db" -e DB_USERNAME=starindex -e DB_PASSWORD=starindex-local \
-    -e REDIS_HOST=valkey -e REDIS_PORT=6379 -e PACK_LOCAL_DIR=/tmp/packs -e ETL_SCHEDULE_ENABLED=false \
+    -e REDIS_HOST=valkey -e REDIS_PORT=6379 -e PACK_LOCAL_DIR=/tmp/packs \
     -e DATA_GO_KR_SERVICE_KEY=ec2sim-not-a-real-key \
     -v "$here/backend/$jar:/app/app.jar:ro" "$image" \
     java $java_opts $nmt -jar /app/app.jar --starindex.data-go-kr.base-url="http://host.docker.internal:$port" "$@" >/dev/null
@@ -97,8 +105,10 @@ jvm() {  # jvm <container name> <java args…>
 oom() { docker inspect "$1" -f '{{.State.OOMKilled}}'; }
 results=()
 
-echo "== server mode, idle ${idle}s"
-jvm starindex-ec2sim-app
+kst_day="$(TZ=Asia/Seoul date +%Y%m%d)"; kst_iso="$(TZ=Asia/Seoul date +%F)"; kst_month="$(TZ=Asia/Seoul date +%Y-%m)"
+echo "== server (web + scheduler + one pipeline in-process), idle ${idle}s"
+jvm starindex-ec2sim-app -e ETL_SCHEDULE_ENABLED=true -- --spring.batch.job.enabled=true \
+  --spring.batch.job.name=forecastPipelineJob "run.at=$(date +%s%N)" "base=${kst_day}1700" "nightDate=$kst_iso"
 started=""
 for _ in $(seq 1 60); do
   if docker logs starindex-ec2sim-app 2>&1 | grep -q "Started StarIndexApplication"; then started=1; break; fi
@@ -111,12 +121,13 @@ if [ -z "$started" ]; then
   exit 1
 fi
 sleep "$idle"
+running="$(docker inspect starindex-ec2sim-app -f '{{.State.Running}}')"
 docker stop -t 60 starindex-ec2sim-app >/dev/null
 docker logs starindex-ec2sim-app > "$out/server.log" 2>&1
-results+=("server OOMKilled=$(oom starindex-ec2sim-app)")
+in_process="$(grep -c 'forecastPipelineJob → COMPLETED' "$out/server.log" || true)"
+results+=("server running-after-idle=$running in-process-pipeline=$([ "$in_process" -ge 1 ] && echo COMPLETED || echo MISSING) OOMKilled=$(oom starindex-ec2sim-app)")
 docker rm starindex-ec2sim-app >/dev/null
 
-kst_day="$(TZ=Asia/Seoul date +%Y%m%d)"; kst_iso="$(TZ=Asia/Seoul date +%F)"; kst_month="$(TZ=Asia/Seoul date +%Y-%m)"
 cli() {  # cli <label> <job> <params…>
   local label="$1" job="$2"; shift 2
   jvm starindex-ec2sim-cli --spring.main.web-application-type=none --spring.main.banner-mode=off \
@@ -167,18 +178,21 @@ print("EC2 memory rehearsal (DB-PLAN 6.2)")
 ok = True
 for name, lim in limits.items():
     v = peak.get(name)
-    flag = "OK" if v is not None and v <= lim else "OVER" if v is not None else "n/a"
-    ok &= flag != "OVER"
+    flag = "OK" if v is not None and v <= lim else "OVER" if v is not None else "NO DATA"
+    ok &= flag == "OK"
     print(f"  peak {name:24s} {'n/a' if v is None else round(v):>5} MiB  (limit {lim})  {flag}")
 jvm = max(peak.get("starindex-ec2sim-app", 0), peak.get("starindex-ec2sim-cli", 0))
 total = peak.get("starindex-postgres", 0) + peak.get("starindex-valkey", 0) + jvm + 270
 print(f"  total postgres + valkey + one JVM + OS/agents 270 = {round(total)} MiB (limit 1600)  {'OK' if total <= 1600 else 'OVER'}")
 ok &= total <= 1600
-print(f"  max starindex connections {max(conns) if conns else 'n/a'} (limit 6)  {'OK' if conns and max(conns) <= 6 else 'CHECK'}")
+conn_ok = bool(conns) and max(conns) <= 6
+ok &= conn_ok
+print(f"  max starindex connections {max(conns) if conns else 'n/a'} (limit 6)  {'OK' if conn_ok else 'FAIL'}")
 for k, v in metas.items():
     print(f"  NMT {k:18s} " + ("n/a" if v is None else f"metaspace committed {v[0]:.0f} MiB, total committed {v[1]:.0f} MiB"))
 for r in results:
     print("  " + r)
-    ok &= "OOMKilled=true" not in r and ("exit=" not in r or "exit=0" in r)
+    ok &= ("OOMKilled=true" not in r and ("exit=" not in r or "exit=0" in r)
+           and "running-after-idle=false" not in r and "MISSING" not in r)
 print("RESULT", "PASS" if ok else "FAIL")
 PY
