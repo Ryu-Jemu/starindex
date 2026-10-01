@@ -85,6 +85,13 @@ rm -f /tmp/fail-restore
 check "failed restore: partial database dropped" test "$(su_psql -c "SELECT count(*) FROM pg_database WHERE datname='starindex_fail'")" = 0
 check "live database intact" test "$(app starindex -c 'SELECT count(*) FROM region')" = 17
 
+echo "== restore.sh: encrypted archive (the workflow's daily backup)"
+BKEY="$(openssl rand -base64 32)"
+BACKUP_KEY="$BKEY" openssl enc -aes-256-cbc -pbkdf2 -iter 600000 -md sha256 -salt -pass env:BACKUP_KEY -in /tmp/s.dump -out /tmp/s.dump.enc
+check "encrypted archive restored with BACKUP_KEY" bash -c "BACKUP_KEY='$BKEY' NEON_ADMIN_PASSWORD='$ADMIN_PW' bash $R/neon/restore.sh /tmp/s.dump.enc starindex_r2 > /tmp/r2.log 2>&1 && grep -q 'region rows 17' /tmp/r2.log" || cat /tmp/r2.log
+check "wrong key refused before creating anything" bash -c "BACKUP_KEY=wrong NEON_ADMIN_PASSWORD='$ADMIN_PW' bash $R/neon/restore.sh /tmp/s.dump.enc starindex_r3 2>&1 | grep -qE 'cannot decrypt|not a pg_dump' && test \"\$(runuser -u postgres -- psql -tAc \"SELECT count(*) FROM pg_database WHERE datname='starindex_r3'\")\" = 0"
+check "missing key refused" bash -c "env -u BACKUP_KEY NEON_ADMIN_PASSWORD='$ADMIN_PW' bash $R/neon/restore.sh /tmp/s.dump.enc starindex_r3 2>&1 | grep -q 'is encrypted: set BACKUP_KEY'"
+
 echo "== pin.sh"
 check "pin" bash -c "NEON_ADMIN_PASSWORD='$ADMIN_PW' bash $R/neon/pin.sh 20261012-1700-b2a3bf8b | grep -q 'pinned: 20261012-1700-b2a3bf8b'"
 check "pinned in DB" test "$(app starindex -c "SELECT pinned FROM data_pack WHERE version='20261012-1700-b2a3bf8b'")" = t
@@ -95,6 +102,7 @@ check "malformed version refused" bash -c "NEON_ADMIN_PASSWORD='$ADMIN_PW' bash 
 check "argv log is recording" test -s /tmp/argv.log
 grep -nF -e "$ADMIN_PW" -e "$FIXED" /tmp/argv.log /tmp/b2.log /tmp/r1.log | sed 's/^/   leak? /' | head -5
 check "no password in argv or logs" bash -c "! grep -rqF -e '$ADMIN_PW' -e '$FIXED' /tmp/argv.log /tmp/b2.log /tmp/r1.log"
+check "no backup key in argv or logs" bash -c "! grep -rqF -e '$BKEY' /tmp/argv.log /tmp/r2.log"
 
 if [ "$fail" != 0 ]; then for f in /tmp/b1.log /tmp/r1.log /tmp/rf.log /tmp/neon.log; do [ -f "$f" ] && { echo "--- $f"; tail -15 "$f"; }; done; fi
 echo "RESULT pass=$pass fail=$fail"

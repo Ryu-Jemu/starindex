@@ -67,6 +67,12 @@ check "restored rows and ownership" bash -c "grep -q 'region rows 17' '$work/r.l
 printf 'not an archive\n' > "$work/bad.dump"
 check "bad archive refused, nothing created" bash -c "(cd '$work' && NEON_ADMIN_PASSWORD='$ADMIN_PW' $BASH32 '$here/restore.sh' '$work/bad.dump' starindex_bad 2>&1 | grep -q 'not a pg_dump') \
   && [ \"\$(PGPASSWORD='$ADMIN_PW' psql 'host=127.0.0.1 port=$PORT user=neondb_owner dbname=neondb sslmode=require' -tAc \"SELECT count(*) FROM pg_database WHERE datname='starindex_bad'\")\" = 0 ]"
+# The daily backup as the workflow makes it (OpenSSL 3 on the runner), decrypted by macOS LibreSSL (/usr/bin first).
+bkey="$(openssl rand -base64 32)"
+BACKUP_KEY="$bkey" docker run --rm -e BACKUP_KEY -v "$work:/w" -w /w postgres:18 \
+  openssl enc -aes-256-cbc -pbkdf2 -iter 600000 -md sha256 -salt -pass env:BACKUP_KEY -in s.dump -out s.dump.enc
+(cd "$work" && BACKUP_KEY="$bkey" PATH="/usr/bin:$PATH" NEON_ADMIN_PASSWORD="$ADMIN_PW" $BASH32 "$here/restore.sh" "$work/s.dump.enc" starindex_r2 > "$work/r2.log" 2>&1)
+check "encrypted backup (OpenSSL 3 → LibreSSL) restored under bash 3.2" bash -c "grep -q 'region rows 17' '$work/r2.log'"
 check "pin.sh under bash 3.2" bash -c "NEON_ADMIN_PASSWORD='$ADMIN_PW' $BASH32 '$here/pin.sh' 20261012-1700-b2a3bf8b | grep -q pinned"
 check "pinned in DB" test "$(app starindex -c "SELECT pinned FROM data_pack WHERE version='20261012-1700-b2a3bf8b'")" = t
 

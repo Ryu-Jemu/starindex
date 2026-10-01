@@ -126,12 +126,12 @@ scripts/etl.sh pin <version>   # 이 팩 버전은 보존 정리에서 지우지
 - 설정: `starindex.etl.data-retention`(기본 `12h`, 최소 12시간: 05:20 실행이 어제 저녁 예보를 읽어야 함), `history-retention`(기본 `2d`, 최소 1일), `pack-keep-min`(기본 3). 최소보다 작으면 앱이 시작하지 않는다.
 - 06시 이후에는 어젯밤 지수를 다시 만들 수 없다. 그 밤의 마지막 팩은 버킷에 남는다.
 - 팩 고정: 로컬 `scripts/etl.sh pin|unpin <version>`, 운영(Neon) `ops/neon/pin.sh <version> [--unpin]`.
-- 운영 백업: 매일 00:40 KST 워크플로가 전체 `pg_dump`(PostgreSQL 18 클라이언트)를 GitHub 아티팩트 `starindex-db-<날짜>`로 7일 보관한다. Neon Free의 복원 기간은 6시간뿐이라 이것이 실제 백업이다. 복구는 6시간 안이면 Neon 즉시 복원, 그보다 오래됐으면 `ops/neon/restore.sh`(운영 DB 옆 새 DB에 복원한 뒤 `DB_URL` 시크릿만 바꾼다).
+- 운영 백업: 매일 00:40 KST 워크플로가 전체 `pg_dump`(PostgreSQL 18 클라이언트)를 **암호화해서**(AES-256-CBC, PBKDF2 60만 회, 키는 시크릿 `BACKUP_KEY`) GitHub 아티팩트 `starindex-db-<날짜>`로 7일 보관한다. 저장소가 공개라 아티팩트는 누구나 받을 수 있기 때문이다. 키는 `ops/neon/app.env`에도 있다(GitHub 시크릿은 다시 읽을 수 없다). 이 파일을 잃으면 백업을 풀 수 없으니 키를 암호 관리자에도 보관한다. Neon Free의 복원 기간은 6시간뿐이라 이것이 실제 백업이다. 복구는 6시간 안이면 Neon 즉시 복원, 그보다 오래됐으면 `ops/neon/restore.sh`(운영 DB 옆 새 DB에 복원한 뒤 `DB_URL` 시크릿만 바꾼다).
 - 연결 풀은 유휴 연결을 남기지 않는다(최소 0, 60초, keepalive 끔). Neon이 5분 뒤 쉬어야 월 100 CU-시간 안에 든다. `/actuator/health`를 주기적으로 호출하지 않는다.
 
 ## 8. 무과금 운영 설정 (GitHub Actions + Neon, ADR-017)
 
-모두 무료 한도 안에서 돈다. GitHub와 Neon 모두 결제 수단이 없으면 한도를 넘어도 과금되지 않고 멈춘다. 시크릿과 변수가 갖춰지기 전에는 예약 실행이 몇 초 만에 "not configured" 알림을 남기고 끝난다.
+모두 무료로 돈다. 저장소는 공개다(10-01 사용자 결정). 공개 저장소는 표준 러너의 Actions 사용이 무료라 분 한도가 없다. Neon은 결제 수단이 없으면 한도를 넘어도 과금되지 않고 멈춘다. 공개 저장소는 60일 동안 저장소 활동(커밋)이 없으면 예약 실행이 꺼진다. 7일 전에 GitHub가 'will be disabled soon' 메일을 보내므로 그 안에 커밋하면 된다. 이미 꺼졌으면 `gh workflow enable etl`로 켠다. 시크릿과 변수가 갖춰지기 전에는 예약 실행이 몇 초 만에 "not configured" 알림을 남기고 끝난다.
 
 | 순서 | 할 일 | 명령 |
 |---|---|---|
@@ -141,8 +141,9 @@ scripts/etl.sh pin <version>   # 이 팩 버전은 보존 정리에서 지우지
 | 4 | 쓰기 자격 증명 → 시크릿 | `neon credentials create --project-id holy-mountain-03233485 --branch production --name starindex-etl --scope storage:read --scope storage:write -o json` → `token_id`를 `gh secret set NEON_STORAGE_KEY_ID`, `s3_secret_access_key`를 `gh secret set NEON_STORAGE_SECRET`(둘 다 표준 입력으로) |
 | 5 | 변수 4개. 엔드포인트는 Console → Connect → Storage(또는 4의 출력)의 `https://br-….storage.c-N.<region>.aws.neon.tech` | `gh variable set PACK_BUCKET -b starindex-packs`, `PACK_S3_ENDPOINT -b <엔드포인트>`, `PACK_S3_REGION -b ap-southeast-1`, `PACK_PUBLIC_URL -b <엔드포인트>/starindex-packs` |
 | 6 | 인증키 | `gh secret set DATA_GO_KR_SERVICE_KEY` (Decoding 키를 붙여 넣는다) |
-| 7 | 첫 실행과 확인. 첫 실행에서 Flyway가 표를 만든다 | `gh workflow run etl -f job=forecastPipelineJob` → `gh run watch` → `python3 scripts/check-public-pack.py "<PACK_PUBLIC_URL>"` |
-| 8 | 앱 Release 빌드가 버킷을 읽게 한다 | `ios/project.yml`의 Release `STARINDEX_PACK_BASE_URL`에 `PACK_PUBLIC_URL`(https)을 넣고 `cd ios && xcodegen generate` |
+| 7 | 백업 암호화 키. 같은 값을 시크릿과 `ops/neon/app.env`에 둔다 | `openssl rand -base64 32`의 값을 `gh secret set BACKUP_KEY`(표준 입력)와 `ops/neon/app.env`의 `BACKUP_KEY=`에 넣는다 |
+| 8 | 첫 실행과 확인. 첫 실행에서 Flyway가 표를 만든다 | `gh workflow run etl -f job=forecastPipelineJob` → `gh run watch` → `python3 scripts/check-public-pack.py "<PACK_PUBLIC_URL>"` |
+| 9 | 앱 Release 빌드가 버킷을 읽게 한다 | `ios/project.yml`의 Release `STARINDEX_PACK_BASE_URL`에 `PACK_PUBLIC_URL`(https)을 넣고 `cd ios && xcodegen generate` |
 
 - 관리자 화면(운영 데이터): Docker Desktop을 켜고 `scripts/admin-neon.sh`를 실행한 뒤 `http://localhost:8080/admin`을 연다.
   - DB 정보는 2가 만든 `ops/neon/app.env`에서 읽는다. 운영 접속 정보를 `backend/.env`에 두지 않는 이유는 로컬 개발(`scripts/etl.sh`)이 운영 DB에 쓰지 않게 하기 위해서다.
@@ -150,5 +151,8 @@ scripts/etl.sh pin <version>   # 이 팩 버전은 보존 정리에서 지우지
   - 버킷의 manifest까지 보려면 `ops/neon/app.env`에 `PACK_BUCKET`, `AWS_ENDPOINT_URL_S3`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`를 더한다.
   - '지금 실행'은 Mac에서 Job을 돌린다. 운영 실행은 `gh workflow run etl -f job=<Job> -f params="nightDate=2026-10-12"`.
 - 감시: 실행이 실패하면 GitHub가 메일을 보낸다(공개 팩의 발표가 6시간보다 오래되면 실패). 첫 주에 Neon Usage(CU-시간, 전송량)와 Actions 사용 분을 확인한다.
-- 복원: `gh run download <run-id> -n starindex-db-2026-10-01 -D /tmp/r && ops/neon/restore.sh /tmp/r/starindex.dump starindex_20261001`. 새 DB 이름에는 하이픈을 쓸 수 없다(소문자·숫자·밑줄만). 출력에 나오는 `gh secret set DB_URL` 명령으로 전환한다.
+- 복원: `gh run download <run-id> -n starindex-db-2026-10-02 -D /tmp/r && ops/neon/restore.sh /tmp/r/starindex.dump.enc starindex_20261002`. 키는 `BACKUP_KEY` 환경 변수 또는 `ops/neon/app.env`에서 읽는다. 새 DB 이름에는 하이픈을 쓸 수 없다(소문자·숫자·밑줄만). 출력에 나오는 `gh secret set DB_URL` 명령으로 전환한다.
+- 비밀 교체(10-01 한 번 실행)
+  - DB 비밀번호: `ops/neon/bootstrap.sh --github --save-local`를 다시 실행한다. 새 무작위 비밀번호로 바꾸고 시크릿과 `app.env`를 함께 고친다. 관리자 비밀번호는 `neon connection-string production --project-id holy-mountain-03233485 --role-name neondb_owner --database-name neondb`에서 읽어 `NEON_ADMIN_PASSWORD`로 넘긴다(화면에 출력하지 않는다).
+  - 스토리지 키: `neon credentials rotate <token_id> --project-id holy-mountain-03233485 --branch production -o json`. 키 ID는 그대로이고, 새 `s3_secret_access_key`를 `gh secret set NEON_STORAGE_SECRET`와 `app.env`의 `AWS_SECRET_ACCESS_KEY`에 넣는다.
 - 로컬 재현(키·계정 없이): `scripts/etl-local-e2e.sh`. 가짜 data.go.kr → 워크플로와 같은 jar 실행 → S3 호환 버킷(S3Mock) → 익명 읽기 검사 순서로 돈다. 운영 스크립트 검증은 `scripts/neon-ops-check.sh`다.

@@ -237,23 +237,30 @@ jobs:
 
       # Neon Free keeps 6 hours of history; this is the real backup (ADR-015). pg_dump must be ≥ the server (18).
       # Runs even when an ETL job failed: a broken API must not also stop the backups.
-      - name: Backup (pg_dump)
+      # The repository is public, so any GitHub user can download its artifacts: only the encrypted dump is uploaded
+      # (AES-256-CBC, PBKDF2 600k; key = secret BACKUP_KEY, kept also in ops/neon/app.env; ops/neon/restore.sh decrypts).
+      - name: Backup (pg_dump, encrypted)
         if: ${{ !cancelled() && steps.plan.outputs.backup == 'true' }}
         env:
           DB_URL: ${{ secrets.DB_URL }}
           DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          BACKUP_KEY: ${{ secrets.BACKUP_KEY }}
         run: |
+          [ -n "$BACKUP_KEY" ] || { echo "::error::BACKUP_KEY secret missing: backups are never uploaded unencrypted"; exit 1; }
           rest="${DB_URL#jdbc:postgresql://}"; hostport="${rest%%/*}"; db="${rest#*/}"; db="${db%%\?*}"
           host="${hostport%%:*}"; port=5432; [[ "$hostport" == *:* ]] && port="${hostport##*:}"
           # The password reaches the container through the environment (-e NAME), never as an argument.
           PGPASSWORD="$DB_PASSWORD" docker run --rm -e PGPASSWORD postgres:18 pg_dump -Fc --no-tablespaces \
             "host=$host port=$port dbname=$db user=$DB_USERNAME sslmode=require channel_binding=require" > starindex.dump
-          ls -l starindex.dump
+          openssl enc -aes-256-cbc -pbkdf2 -iter 600000 -md sha256 -salt -pass env:BACKUP_KEY \
+            -in starindex.dump -out starindex.dump.enc
+          echo "dump $(wc -c < starindex.dump) B, sha256 $(sha256sum starindex.dump | cut -c1-16)…; encrypted $(wc -c < starindex.dump.enc) B"
+          rm starindex.dump
           echo "BACKUP_NAME=starindex-db-$(TZ=Asia/Seoul date +%F)" >> "$GITHUB_ENV"
       - uses: actions/upload-artifact@v7
         if: ${{ !cancelled() && steps.plan.outputs.backup == 'true' && env.BACKUP_NAME != '' }}
         with:
           name: ${{ env.BACKUP_NAME }}
-          path: starindex.dump
+          path: starindex.dump.enc
           retention-days: 7
           if-no-files-found: error

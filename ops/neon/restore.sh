@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Restore a pg_dump archive into a NEW database next to the live one (ADR-017; never overwrites existing data).
-#   ops/neon/restore.sh <file.dump> <new-db>
-# Daily archives are GitHub Actions artifacts of the etl workflow (7 days):
-#   gh run download <run-id> -n starindex-db-<date> -D /tmp/restore && ops/neon/restore.sh /tmp/restore/starindex.dump starindex_20261005
+#   ops/neon/restore.sh <file.dump | file.dump.enc> <new-db>
+# Daily archives are GitHub Actions artifacts of the etl workflow (7 days), encrypted because the repository is public:
+#   gh run download <run-id> -n starindex-db-<date> -D /tmp/restore && ops/neon/restore.sh /tmp/restore/starindex.dump.enc starindex_20261005
+# The key is BACKUP_KEY from the environment, else from ops/neon/app.env (the GitHub secret cannot be read back).
 # The admin login creates the database owned by starindex and restores AS starindex (SET ROLE), so the app owns
 # every object. A failed restore drops the partial database. Switching the ETL to it = changing the DB_URL secret.
 # A mistake noticed within 6 hours is simpler to undo with Neon's instant restore (Console → Backup & Restore).
@@ -10,7 +11,7 @@ set -Eeuo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=lib.sh
 . "$here/lib.sh"
-usage="usage: restore.sh <file.dump> <new-db>"
+usage="usage: restore.sh <file.dump | file.dump.enc> <new-db>"
 src="${1:?$usage}"
 target="${2:?$usage}"
 [ -f "$src" ] || die "no such file: $src"
@@ -25,7 +26,17 @@ exists="$(psql -v ON_ERROR_STOP=1 -tAq -c "SELECT count(*) FROM pg_database WHER
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
-cp "$src" "$work/r.dump"
+case "$src" in
+  *.enc)
+    key="${BACKUP_KEY:-}"
+    [ -n "$key" ] || { [ -r "$here/app.env" ] && key="$(sed -n 's/^BACKUP_KEY=//p' "$here/app.env" | tail -1)"; }
+    [ -n "$key" ] || die "$src is encrypted: set BACKUP_KEY (or keep it in $here/app.env)"
+    # The workflow's parameters (etl-attempt.yml, Backup); OpenSSL 1.1.1+/3.x and macOS LibreSSL both read them.
+    BACKUP_KEY="$key" openssl enc -d -aes-256-cbc -pbkdf2 -iter 600000 -md sha256 -pass env:BACKUP_KEY \
+      -in "$src" -out "$work/r.dump" 2>/dev/null || die "cannot decrypt $src (wrong BACKUP_KEY?)"
+    unset key ;;
+  *) cp "$src" "$work/r.dump" ;;
+esac
 # Before anything is created (and before the ERR trap): the file must be a pg_dump custom-format archive.
 if ! listing_err="$(cd "$work" && pg18 pg_restore --list r.dump 2>&1 >/dev/null)"; then
   case "$listing_err" in

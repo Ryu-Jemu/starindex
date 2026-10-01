@@ -13,7 +13,8 @@ name: etl
 # run fail and GitHub send its mail; that last attempt still runs retentionJob (Neon only).
 #
 #   secrets   DB_URL, DB_PASSWORD (ops/neon/bootstrap.sh --github), DATA_GO_KR_SERVICE_KEY,
-#             NEON_STORAGE_KEY_ID, NEON_STORAGE_SECRET (neon credentials create --scope storage:read --scope storage:write)
+#             NEON_STORAGE_KEY_ID, NEON_STORAGE_SECRET (neon credentials create --scope storage:read --scope storage:write),
+#             BACKUP_KEY (encrypts the daily dump; the same value in ops/neon/app.env for restore.sh)
 #   variables PACK_BUCKET, PACK_S3_ENDPOINT (https://br-….storage.c-N.aws-ap-southeast-1…), PACK_S3_REGION,
 #             PACK_PUBLIC_URL (= the app's STARINDEX_PACK_BASE_URL: <endpoint>/<bucket>)
 on:
