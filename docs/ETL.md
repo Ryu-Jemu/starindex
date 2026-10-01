@@ -128,7 +128,7 @@ scripts/etl.sh pin <version>   # 이 팩 버전은 보존 정리에서 지우지
 | 순서 | 할 일 | 명령 |
 |---|---|---|
 | 1 | Neon 접속 정보 파일. 직접 엔드포인트(`-pooler` 없음), DB 이름 `starindex` | `cp ops/neon/neon.env.example ops/neon/neon.env` 후 `DB_URL` 편집 |
-| 2 | 앱 역할·DB 만들기, 시크릿 `DB_URL`·`DB_PASSWORD`, 로컬 관리자용 `backend/.env` | `ops/neon/bootstrap.sh --github --save-local` (neondb_owner 비밀번호를 묻는다) |
+| 2 | 앱 역할·DB 만들기, 시크릿 `DB_URL`·`DB_PASSWORD`, 로컬 관리자용 `ops/neon/app.env` | `ops/neon/bootstrap.sh --github --save-local` (neondb_owner 비밀번호를 묻는다) |
 | 3 | 공개 읽기 버킷 | `neon bucket create starindex-packs --project-id holy-mountain-03233485 --branch production --access-level public_read` |
 | 4 | 쓰기 자격 증명 → 시크릿 | `neon credentials create --project-id holy-mountain-03233485 --branch production --name starindex-etl --scope storage:read --scope storage:write -o json` → `token_id`를 `gh secret set NEON_STORAGE_KEY_ID`, `s3_secret_access_key`를 `gh secret set NEON_STORAGE_SECRET`(둘 다 표준 입력으로) |
 | 5 | 변수 4개. 엔드포인트는 Console → Connect → Storage(또는 4의 출력)의 `https://br-….storage.c-N.<region>.aws.neon.tech` | `gh variable set PACK_BUCKET -b starindex-packs`, `PACK_S3_ENDPOINT -b <엔드포인트>`, `PACK_S3_REGION -b ap-southeast-1`, `PACK_PUBLIC_URL -b <엔드포인트>/starindex-packs` |
@@ -136,9 +136,10 @@ scripts/etl.sh pin <version>   # 이 팩 버전은 보존 정리에서 지우지
 | 7 | 첫 실행과 확인. 첫 실행에서 Flyway가 표를 만든다 | `gh workflow run etl -f job=forecastPipelineJob` → `gh run watch` → `python3 scripts/check-public-pack.py "<PACK_PUBLIC_URL>"` |
 | 8 | 앱 Release 빌드가 버킷을 읽게 한다 | `ios/project.yml`의 Release `STARINDEX_PACK_BASE_URL`에 `PACK_PUBLIC_URL`(https)을 넣고 `cd ios && xcodegen generate` |
 
-- 관리자 화면(로컬): Docker Desktop을 켜고 `cd backend && docker compose up -d valkey && ./gradlew bootRun`을 실행한 뒤 `http://localhost:8080/admin`을 연다.
-  - `backend/.env`에 2의 DB 정보와 `ADMIN_PASSWORD_HASH`(README 참고)를 넣는다.
-  - 버킷의 manifest까지 보려면 4·5의 값을 `PACK_BUCKET`, `AWS_ENDPOINT_URL_S3`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`로 넣는다.
+- 관리자 화면(운영 데이터): Docker Desktop을 켜고 `scripts/admin-neon.sh`를 실행한 뒤 `http://localhost:8080/admin`을 연다.
+  - DB 정보는 2가 만든 `ops/neon/app.env`에서 읽는다. 운영 접속 정보를 `backend/.env`에 두지 않는 이유는 로컬 개발(`scripts/etl.sh`)이 운영 DB에 쓰지 않게 하기 위해서다.
+  - 관리자 비밀번호 해시는 `backend/.env`의 `ADMIN_PASSWORD_HASH`다(README 참고).
+  - 버킷의 manifest까지 보려면 `ops/neon/app.env`에 `PACK_BUCKET`, `AWS_ENDPOINT_URL_S3`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`를 더한다.
   - '지금 실행'은 Mac에서 Job을 돌린다. 운영 실행은 `gh workflow run etl -f job=<Job> -f params="nightDate=2026-10-12"`.
 - 감시: 실행이 실패하면 GitHub가 메일을 보낸다(공개 팩의 발표가 6시간보다 오래되면 실패). 첫 주에 Neon Usage(CU-시간, 전송량)와 Actions 사용 분을 확인한다.
 - 복원: `gh run download <run-id> -n starindex-db-<날짜> -D /tmp/r && ops/neon/restore.sh /tmp/r/starindex.dump starindex_<날짜>`. 출력에 나오는 `gh secret set DB_URL` 명령으로 전환한다.

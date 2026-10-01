@@ -2,7 +2,8 @@
 # One-time database setup on Neon (ADR-015, ADR-017), from the Mac:
 #   ops/neon/bootstrap.sh            # asks the neondb_owner password; creates the role starindex and its database
 #   ops/neon/bootstrap.sh --github   # … and stores DB_URL / DB_PASSWORD as GitHub Actions secrets (gh, logged in)
-#   ops/neon/bootstrap.sh --github --save-local   # … and in backend/.env (git-ignored, 0600) for the local admin page
+#   ops/neon/bootstrap.sh --github --save-local   # … and in ops/neon/app.env (git-ignored, 0600) for scripts/admin-neon.sh
+# The production login never goes to backend/.env: local development (scripts/etl.sh, bootRun) must not write to Neon.
 # The app role gets a fresh random password on every run (re-run = rotation); APP_DB_PASSWORD sets a given one instead.
 # Without --github a generated password is printed once at the end: put it in the GitHub secret DB_PASSWORD yourself.
 # Idempotent: the role and database are created only when missing (create-db.sql).
@@ -14,7 +15,7 @@ github=""; save_local=""
 for a in "$@"; do
   case "$a" in --github) github=1 ;; --save-local) save_local=1 ;; *) die "usage: bootstrap.sh [--github] [--save-local]" ;; esac
 done
-LOCAL_ENV="${LOCAL_ENV:-$(cd "$here/../.." && pwd)/backend/.env}"
+LOCAL_ENV="${LOCAL_ENV:-$here/app.env}"
 if [ -n "$github" ]; then gh auth status >/dev/null 2>&1 || die "--github: gh is not logged in (gh auth login)"; fi
 parse_db_url
 db_url="$(setting DB_URL)"
@@ -39,7 +40,7 @@ echo "== check as the app role"
   echo "client TLS: ${tls:-none} (sslmode=$PGSSLMODE, channel_binding=${PGCHANNELBINDING:-default})" )
 
 if [ -n "$save_local" ]; then
-  echo "== $LOCAL_ENV (DB_URL, DB_USERNAME, DB_PASSWORD for the local admin page)"
+  echo "== $LOCAL_ENV (DB_URL, DB_USERNAME, DB_PASSWORD for scripts/admin-neon.sh)"
   touch "$LOCAL_ENV" && chmod 600 "$LOCAL_ENV"
   for kv in "DB_URL=$db_url" "DB_USERNAME=starindex" "DB_PASSWORD=$pw"; do
     k="${kv%%=*}"
