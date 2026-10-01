@@ -1,8 +1,8 @@
-# Daily database backup to S3 (DB-PLAN 5.5). Started by starindex-pgdump.timer.
+# Daily database backup to S3 (DB-PLAN 5.5, ADR-015: dumps Neon over TLS). Started by starindex-pgdump.timer.
 [Unit]
 Description=StarIndex pg_dump to S3
 Wants=network-online.target
-After=network-online.target postgresql.service
+After=network-online.target
 
 [Service]
 Type=oneshot

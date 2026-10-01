@@ -1,9 +1,12 @@
-# StarIndex backend (DB-PLAN 5.8). Wants (not Requires) postgresql: while DB_URL points at RDS the local server may not
-# exist; Hikari reconnects when PostgreSQL restarts.
+# StarIndex backend (ADR-015: the database is Neon, reached over TLS; Valkey runs locally).
 [Unit]
 Description=StarIndex backend (ETL scheduler, public API, admin)
-Wants=network-online.target postgresql.service valkey.service
-After=network-online.target postgresql.service valkey.service
+Wants=network-online.target valkey.service
+After=network-online.target valkey.service
+# A startup crash loop must not keep Neon awake (every start connects and resets its 5-minute suspend timer):
+# at most 5 starts per hour, then the unit stays failed (fix, then: systemctl reset-failed starindex && systemctl start starindex).
+StartLimitIntervalSec=3600
+StartLimitBurst=5
 
 [Service]
 User=starindex
@@ -12,7 +15,7 @@ WorkingDirectory=/opt/starindex
 EnvironmentFile=/etc/starindex/app.env
 ExecStart=/opt/starindex/start.sh
 Restart=on-failure
-RestartSec=10
+RestartSec=120
 # 143 = SIGTERM exit of the JVM after a graceful shutdown
 SuccessExitStatus=143
 TimeoutStopSec=60

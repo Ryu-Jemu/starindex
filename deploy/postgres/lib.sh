@@ -1,6 +1,7 @@
 # shellcheck shell=bash
-# Shared by backup.sh, restore.sh, pin.sh (DB-PLAN 5.4–5.6). The connection comes from DB_URL in the app's
-# EnvironmentFile, so the same scripts work for EC2 PostgreSQL and RDS; the password comes from SSM.
+# Shared by the deploy scripts (ADR-015). The database is Neon (or RDS / any PostgreSQL 18): the app's connection comes
+# from DB_URL in the EnvironmentFile, its password from SSM. Administrative steps (role and databases) use a separate
+# admin login (Neon: neondb_owner on neondb) whose password is typed or passed in ADMIN_PGPASSWORD, never stored.
 APP_ENV="${APP_ENV:-/etc/starindex/app.env}"
 AWS_REGION="${AWS_REGION:-ap-northeast-2}"
 
@@ -17,8 +18,11 @@ env_get() {
   sed -n "s/^$1=//p" "$APP_ENV" | tail -1
 }
 
-# DB_URL=jdbc:postgresql://host[:port]/db[?sslmode=…] → PGHOST PGPORT PGDATABASE [PGSSLMODE]; PGUSER, PGPASSWORD.
-load_db_env() {
+valid_db_name() { [[ "$1" =~ ^[a-z_][a-z0-9_]{0,62}$ ]]; }
+
+# DB_URL=jdbc:postgresql://host[:port]/db[?sslmode=…&channelBinding=…]
+#   → PGHOST PGPORT PGDATABASE, PGSSLMODE and PGCHANNELBINDING when given (libpq names for pgjdbc's parameters).
+parse_db_url() {
   local url rest hostport path query
   url="$(env_get DB_URL)"
   rest="${url#jdbc:postgresql://}"
@@ -29,22 +33,29 @@ load_db_env() {
   export PGDATABASE="${path%%\?*}"
   query=""; [[ "$path" == *\?* ]] && query="${path#*\?}"
   if [[ "$query" =~ (^|&)sslmode=([^&]+) ]]; then export PGSSLMODE="${BASH_REMATCH[2]}"; fi
+  if [[ "$query" =~ (^|&)channelBinding=([^&]+) ]]; then export PGCHANNELBINDING="${BASH_REMATCH[2]}"; fi
+  valid_db_name "$PGDATABASE" || die "unexpected database name in DB_URL: $PGDATABASE"
+}
+
+# The app role (DB_USERNAME, password from SSM).
+load_db_env() {
+  parse_db_url
   PGUSER="$(env_get DB_USERNAME)"; export PGUSER="${PGUSER:-starindex}"
   PGPASSWORD="$(ssm /starindex/db/password)" || die "cannot read /starindex/db/password from SSM"
   export PGPASSWORD
 }
 
-# Administrative commands on the local server: peer auth as postgres over the socket, never the app's PG* settings.
-as_postgres() {
-  runuser -u postgres -- env -u PGHOST -u PGPORT -u PGDATABASE -u PGUSER -u PGPASSWORD -u PGSSLMODE "$@"
+# The admin login on the same server: ADMIN_USER (default neondb_owner) on ADMIN_DB (default neondb).
+# RDS: ADMIN_USER=<master user> ADMIN_DB=postgres.
+load_admin_env() {
+  parse_db_url
+  export PGUSER="${ADMIN_USER:-neondb_owner}" PGDATABASE="${ADMIN_DB:-neondb}"
+  if [ -z "${ADMIN_PGPASSWORD:-}" ]; then
+    # /dev/tty exists even without a controlling terminal; only opening it tells.
+    { : </dev/tty; } 2>/dev/null || die "no terminal: set ADMIN_PGPASSWORD (the $PGUSER password) in the environment"
+    read -rsp "password for $PGUSER@$PGHOST/$PGDATABASE: " ADMIN_PGPASSWORD </dev/tty \
+      || die "no password: set ADMIN_PGPASSWORD or run this from a terminal"
+    echo >&2
+  fi
+  export PGPASSWORD="$ADMIN_PGPASSWORD"
 }
-
-# Run psql as postgres on an SQL file that root opens: works even when the checkout is in a 0700 home directory.
-psql_postgres_file() {  # psql_postgres_file <file> [psql args…]
-  local file="$1"; shift
-  as_postgres psql -v ON_ERROR_STOP=1 -q "$@" < "$file"
-}
-
-db_exists() { [ "$(as_postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname = '$1'")" = 1 ]; }
-
-is_local_db() { [ "$PGHOST" = 127.0.0.1 ] || [ "$PGHOST" = localhost ] || [ "$PGHOST" = "::1" ]; }

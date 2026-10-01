@@ -8,10 +8,16 @@ spring:
     url: ${DB_URL:jdbc:postgresql://127.0.0.1:15432/starindex}
     username: ${DB_USERNAME:starindex}
     password: ${DB_PASSWORD:starindex-local}
+    # Neon Free (ADR-015) suspends the compute after 5 minutes without queries and allows 100 CU-hours a month.
+    # The pool must hold no idle connection between batch runs: no minimum, idle connections closed after 60 s
+    # (+ up to 30 s housekeeping), and no keepalive ping (HikariCP 7 pings idle connections every 2 min by default).
+    # Values are milliseconds: Hikari's setters take numbers, not "10m". Guarded by DataSourcePoolTest.
     hikari:
-      maximum-pool-size: 5      # batch + admin web; PostgreSQL max_connections=20 on the 2 GiB EC2 (DB-PLAN 4.4)
-      minimum-idle: 1
-      idle-timeout: 600000      # ms (Hikari takes a number, not "10m")
+      maximum-pool-size: 5      # batch + admin web
+      minimum-idle: 0
+      idle-timeout: 60000
+      keepalive-time: 0
+      connection-timeout: 30000 # covers a cold start (a few hundred ms, Neon suggests allowing ~10 s)
   jpa:
     open-in-view: false
     hibernate:
@@ -36,6 +42,8 @@ server:
     use-relative-redirects: true
 
 # Actuator only on loopback:8081 (CodeDeploy validate.sh); the public port exposes /api/health.
+# Never poll /actuator/health periodically: its db indicator opens a connection and would keep Neon awake (ADR-015).
+# The public /api/health (W3) must not touch the database.
 management:
   server:
     port: 8081

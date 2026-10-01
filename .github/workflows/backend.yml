@@ -33,7 +33,7 @@ jobs:
             echo "dropped table referenced in backend/src/main/java" >&2; exit 1
           fi
       - name: Shell scripts (shellcheck is preinstalled on ubuntu-latest)
-        run: shellcheck --severity=warning -x -P deploy/postgres deploy/postgres/*.sh deploy/app/start.sh deploy/test/al2023-harness.sh scripts/etl.sh scripts/ec2sim.sh scripts/deploy-check.sh
+        run: shellcheck --severity=warning -x -P deploy/postgres deploy/ec2/install.sh deploy/postgres/*.sh deploy/app/start.sh deploy/test/al2023-harness.sh scripts/etl.sh scripts/ec2sim.sh scripts/deploy-check.sh
       - name: Backend tests (Testcontainers PostgreSQL 18 + Valkey, WireMock) + catalog builder (T9)
         working-directory: backend
         run: ./gradlew --no-daemon test

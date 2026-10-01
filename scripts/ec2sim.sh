@@ -1,16 +1,18 @@
 #!/usr/bin/env bash
-# EC2 (t4g.small) memory rehearsal, DB-PLAN 6.2. Needs Docker; no data.go.kr key (scripts/ec2sim_stub.py answers).
+# EC2 memory rehearsal, DB-PLAN 6.2 and 11 (ADR-015: the database is Neon, so the EC2 runs the JVM and Valkey only).
+# Needs Docker; no data.go.kr key (scripts/ec2sim_stub.py answers). The local postgres stands in for Neon.
 #
 #   scripts/ec2sim.sh [idle-seconds]      # default 600 (10 min server baseline)
 #
-# 1. postgres/valkey recreated with the EC2 limits (docker-compose.ec2sim.yml); a throwaway DB starindex_ec2sim
-#    (the dev database is not touched).
+# 1. valkey recreated with its EC2 limit (docker-compose.ec2sim.yml); a throwaway DB starindex_ec2sim on the local
+#    postgres (the dev database is not touched).
 # 2. The app jar in a linux/arm64 JVM container (--cpus=2 --memory=1g) with the JAVA_OPTS of deploy/app/app.env.example
 #    plus Native Memory Tracking, configured as in production: web server + scheduler, and one forecastPipelineJob run
 #    inside that JVM at start. Kept for the idle period, checked still running, then stopped (NMT printed on exit).
 # 3. Then CLI JVMs one at a time (EC2 runs one JVM; these exercise every job): pipeline ×3, publish, astro, events;
 #    then pg_dump.
-# 4. Report: peak memory per container, OOMKilled/exit codes, Metaspace committed, max starindex connections.
+# 4. Report: peak memory of the EC2 processes (JVM, Valkey) against t4g.small and, for reference, t4g.micro; exit codes;
+#    Metaspace; max connections; and whether the idle server drained its pool to 0 connections (Neon can then suspend).
 #    Missing measurements count as failures.
 #    → backend/build/ec2sim/report.txt. Containers are recreated without limits at the end.
 set -euo pipefail
@@ -27,18 +29,6 @@ mkdir -p "$out"
 
 cd "$here/backend"
 docker info >/dev/null 2>&1 || { echo "Docker is not running." >&2; exit 3; }
-
-# The memory values of the override must be the ones EC2 gets from tune.sql.
-python3 - "$here/deploy/postgres/tune.sql" docker-compose.ec2sim.yml <<'PY'
-import re, sys
-tune = dict(re.findall(r"ALTER SYSTEM SET (\w+) = '?([^';]+)'?;", open(sys.argv[1]).read()))
-yml = dict(re.findall(r'"-c", "(\w+)=([^"]+)"', open(sys.argv[2]).read()))
-bad = {k: (tune[k], yml.get(k)) for k in ("max_connections", "shared_buffers", "effective_cache_size", "work_mem",
-                                           "maintenance_work_mem", "huge_pages", "max_wal_size", "min_wal_size")
-       if tune[k] != yml.get(k)}
-if bad:
-    sys.exit(f"docker-compose.ec2sim.yml differs from tune.sql: {bad}")
-PY
 
 java_opts="$(sed -n 's/^JAVA_OPTS=//p' "$here/deploy/app/app.env.example" | sed 's#/var/log/starindex/gc.log#/tmp/gc.log#')"
 malloc="$(sed -n 's/^MALLOC_ARENA_MAX=//p' "$here/deploy/app/app.env.example")"
@@ -78,8 +68,9 @@ python3 "$here/scripts/ec2sim_stub.py" "$port" & stub_pid=$!
 (
   while :; do
     docker stats --no-stream --format '{{.Name}} {{.MemUsage}}' 2>/dev/null | awk -v t="$(date +%s)" '$1 ~ /^starindex-/ {print t, $1, $2}' >> "$out/mem.log"
-    docker exec starindex-postgres psql -U starindex -d starindex -tAc \
-      "SELECT count(*) FROM pg_stat_activity WHERE usename = 'starindex' AND pid <> pg_backend_pid()" >> "$out/conn.log" 2>/dev/null
+    c="$(docker exec starindex-postgres psql -U starindex -d starindex -tAc \
+      "SELECT count(*) FROM pg_stat_activity WHERE usename = 'starindex' AND datname = '$db'" 2>/dev/null)" \
+      && echo "$(date +%s) $c" >> "$out/conn.log"
     sleep 2
   done
 ) & sampler_pid=$!
@@ -107,6 +98,7 @@ results=()
 
 kst_day="$(TZ=Asia/Seoul date +%Y%m%d)"; kst_iso="$(TZ=Asia/Seoul date +%F)"; kst_month="$(TZ=Asia/Seoul date +%Y-%m)"
 echo "== server (web + scheduler + one pipeline in-process), idle ${idle}s"
+server_t0="$(date +%s)"
 jvm starindex-ec2sim-app -e ETL_SCHEDULE_ENABLED=true -- --spring.batch.job.enabled=true \
   --spring.batch.job.name=forecastPipelineJob "run.at=$(date +%s%N)" "base=${kst_day}1700" "nightDate=$kst_iso"
 started=""
@@ -121,6 +113,7 @@ if [ -z "$started" ]; then
   exit 1
 fi
 sleep "$idle"
+server_t1="$(date +%s)"
 running="$(docker inspect starindex-ec2sim-app -f '{{.State.Running}}')"
 docker stop -t 60 starindex-ec2sim-app >/dev/null
 docker logs starindex-ec2sim-app > "$out/server.log" 2>&1
@@ -151,9 +144,9 @@ sleep 4
 results+=("postgres OOMKilled=$(oom starindex-postgres)" "valkey OOMKilled=$(oom starindex-valkey)")
 
 kill "$sampler_pid" 2>/dev/null; sampler_pid=""
-python3 - "$out" "${results[@]}" <<'PY' | tee "$out/report.txt"
+python3 - "$out" "$server_t0" "$server_t1" "${results[@]}" <<'PY' | tee "$out/report.txt"
 import collections, re, sys
-out, results = sys.argv[1], sys.argv[2:]
+out, t0, t1, results = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), sys.argv[4:]
 unit = {"B": 1 / 2**20, "KiB": 1 / 1024, "MiB": 1, "GiB": 1024}
 peak = collections.defaultdict(float)
 for line in open(f"{out}/mem.log"):
@@ -161,7 +154,10 @@ for line in open(f"{out}/mem.log"):
     m = re.match(r"([\d.]+)(B|KiB|MiB|GiB)", usage)
     if m:
         peak[name] = max(peak[name], float(m.group(1)) * unit[m.group(2)])
-conns = [int(x) for x in open(f"{out}/conn.log").read().split() if x.isdigit()]
+samples = [tuple(map(int, l.split())) for l in open(f"{out}/conn.log") if len(l.split()) == 2 and l.split()[1].isdigit()]
+conns = [c for _, c in samples]
+# After the in-process pipeline (first ~2 min) the idle server must reach 0 connections: Neon then suspends 5 min later.
+idle_window = [c for t, c in samples if t0 + 150 <= t <= t1]
 def nmt(log):
     """(metaspace committed, NMT total committed) in MiB from -XX:+PrintNMTStatistics (bytes), or None."""
     text = open(log, errors="replace").read()
@@ -173,21 +169,28 @@ def nmt(log):
     return (int(md.group(1)) + (int(cs.group(1)) if cs else 0)) / 2**20, int(total.group(1)) / 2**20 if total else float("nan")
 import glob
 metas = {p.rsplit("/", 1)[1]: nmt(p) for p in sorted(glob.glob(f"{out}/*.log")) if p.endswith("server.log") or "/cli-" in p}
-limits = {"starindex-postgres": 250, "starindex-valkey": 150, "starindex-ec2sim-app": 900, "starindex-ec2sim-cli": 900}
-print("EC2 memory rehearsal (DB-PLAN 6.2)")
+limits = {"starindex-valkey": 150, "starindex-ec2sim-app": 900, "starindex-ec2sim-cli": 900}
+print("EC2 memory rehearsal (DB-PLAN 6.2, ADR-015: database on Neon)")
 ok = True
 for name, lim in limits.items():
     v = peak.get(name)
     flag = "OK" if v is not None and v <= lim else "OVER" if v is not None else "NO DATA"
     ok &= flag == "OK"
     print(f"  peak {name:24s} {'n/a' if v is None else round(v):>5} MiB  (limit {lim})  {flag}")
+pg = peak.get("starindex-postgres")
+print(f"  peak starindex-postgres (Neon stand-in, not on the EC2) {'n/a' if pg is None else round(pg)} MiB")
 jvm = max(peak.get("starindex-ec2sim-app", 0), peak.get("starindex-ec2sim-cli", 0))
-total = peak.get("starindex-postgres", 0) + peak.get("starindex-valkey", 0) + jvm + 270
-print(f"  total postgres + valkey + one JVM + OS/agents 270 = {round(total)} MiB (limit 1600)  {'OK' if total <= 1600 else 'OVER'}")
+total = peak.get("starindex-valkey", 0) + jvm + 270
+print(f"  t4g.small: valkey + one JVM + OS/agents 270 = {round(total)} MiB (limit 1600)  {'OK' if total <= 1600 else 'OVER'}")
 ok &= total <= 1600
+print(f"  t4g.micro (reference, ~900 MiB usable [assumed], needs -Xmx384m): {round(total)} MiB  {'fits' if total <= 900 else 'does not fit'}")
 conn_ok = bool(conns) and max(conns) <= 6
 ok &= conn_ok
 print(f"  max starindex connections {max(conns) if conns else 'n/a'} (limit 6)  {'OK' if conn_ok else 'FAIL'}")
+drained = bool(idle_window) and min(idle_window) == 0
+ok &= drained
+print(f"  idle server drained its pool to 0 connections: {'yes' if drained else 'NO'} "
+      f"({sum(1 for c in idle_window if c == 0)}/{len(idle_window)} idle samples at 0)")
 for k, v in metas.items():
     print(f"  NMT {k:18s} " + ("n/a" if v is None else f"metaspace committed {v[0]:.0f} MiB, total committed {v[1]:.0f} MiB"))
 for r in results:

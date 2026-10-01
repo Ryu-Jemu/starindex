@@ -1,23 +1,44 @@
 #!/usr/bin/env bash
-# Restore a backup into the LOCAL PostgreSQL (DB-PLAN 5.6). For RDS follow 5.7 (create-db.sql as the master user).
-#   sudo /opt/starindex/postgres/restore.sh <YYYY-MM-DD | latest | /path/file.dump> [starindex_restoretest]
-# Without a second argument the live database is replaced: the archive is checked first, the app is stopped, the
-# current database is kept as <db>_prev, and any failure puts it back and starts the app again.
-# Rehearsal: restore.sh latest starindex_restoretest (the app keeps running).
+# Restore a backup (ADR-015, DB-PLAN 11.5). No existing database with data is ever dropped or overwritten.
+#   /opt/starindex/postgres/restore.sh <YYYY-MM-DD | latest | file.dump> <target-db> [--switch]
+#   target-db:
+#     starindex_restoretest  rehearsal copy, replaced on every run
+#     a NEW name             e.g. starindex_20261005 for a real restore next to the live database (refused if it exists)
+#     the live database      only while it is still EMPTY (first fill after bootstrap-db.sh, e.g. the RDS → Neon move)
+#   --switch (root): after the checks pass, stop the app, point DB_URL at target-db (app.env keeps a .bak copy), start it.
+# The admin login creates the database (password typed or ADMIN_PGPASSWORD); the app role restores into it and owns it.
+# A mistake noticed within 6 hours is simpler to undo with Neon's instant restore (Console → Backup & Restore).
 set -Eeuo pipefail
-[ "$(id -u)" -eq 0 ] || { echo "run as root (sudo)" >&2; exit 1; }
 here="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=lib.sh
 . "$here/lib.sh"
-src="${1:?usage: restore.sh <YYYY-MM-DD|latest|file.dump> [starindex_restoretest]}"
-load_db_env
+usage="usage: restore.sh <YYYY-MM-DD|latest|file.dump> <target-db> [--switch]"
+src="${1:?$usage}"
+target="${2:?$usage}"
+switch=""
+case "${3:-}" in
+  "") ;;
+  --switch) switch=1 ;;
+  *) die "$usage" ;;
+esac
+valid_db_name "$target" || die "invalid database name: $target"
+parse_db_url
 live_db="$PGDATABASE"
-target="${2:-$live_db}"
-# Only the databases pg_hba.conf lets the owner role reach (and never postgres or a template).
-[ "$target" = "$live_db" ] || [ "$target" = starindex_restoretest ] \
-  || die "target must be $live_db or starindex_restoretest: $target"
-is_local_db || die "DB_URL points at $PGHOST: restore.sh only restores into the local PostgreSQL (see DB-PLAN 5.7 for RDS)"
-prev="${target}_prev"
+if [ -n "$switch" ] && [ "$(id -u)" -ne 0 ]; then die "--switch needs root (systemctl, $APP_ENV)"; fi
+if [ -n "$switch" ] && [ "$target" = "$live_db" ]; then die "--switch: $target is already the live database"; fi
+app_psql() { ( load_db_env && psql -d "$1" -v ON_ERROR_STOP=1 -tAq -c "$2" ); }
+target_exists="$(app_psql "$live_db" "SELECT count(*) FROM pg_database WHERE datname = '$target'")" \
+  || die "cannot reach $live_db as the app role (bootstrap-db.sh done?)"
+mode=new
+if [ "$target" = "$live_db" ]; then
+  [ "$(app_psql "$live_db" "SELECT count(*) FROM pg_tables WHERE schemaname = 'public'")" = 0 ] \
+    || die "$live_db is the live database and has tables: restore next to it under a new name, then --switch"
+  mode=fill-empty-live
+elif [ "$target" = starindex_restoretest ]; then
+  mode=rehearsal
+elif [ "$target_exists" != 0 ]; then
+  die "$target already exists: choose a new name (an older database may be a rollback copy kept by --switch)"
+fi
 
 work="$(mktemp -d /var/tmp/starindex-restore-XXXXXX)"
 chmod 755 "$work"
@@ -38,46 +59,57 @@ else
   aws s3 cp --region "$AWS_REGION" --only-show-errors "s3://$bucket/backup/db/$name" "$work/r.dump"
   chmod 644 "$work/r.dump"
 fi
-# Before anything is stopped or renamed: the file must be a pg_dump custom-format archive.
+# Before anything is created: the file must be a pg_dump custom-format archive.
 pg_restore --list "$work/r.dump" >/dev/null 2>&1 || die "not a pg_dump archive (pg_dump -Fc): $src"
 
-stopped=""
-rollback() {
+# The app role owns the restore databases, so it can drop the rehearsal copy or a partial new one (never the live one).
+drop_target() { ( load_db_env && psql -d "$live_db" -v ON_ERROR_STOP=1 -qc "DROP DATABASE IF EXISTS \"$target\" WITH (FORCE)" ); }
+cleanup_failed() {
   trap - ERR
-  echo "restore failed: removing the partial $target and putting the previous one back" >&2
-  as_postgres dropdb --if-exists --force "$target" || true
-  if db_exists "$prev"; then
-    as_postgres psql -qc "ALTER DATABASE \"$prev\" RENAME TO \"$target\"" || echo "could not rename $prev back to $target" >&2
+  if [ "$mode" = fill-empty-live ]; then
+    # --single-transaction rolled the restore back: the live database is empty again
+    echo "restore failed: nothing was committed to $live_db" >&2
+  else
+    echo "restore failed: dropping the partial $target; the live database $live_db was not touched" >&2
+    drop_target || echo "could not drop $target" >&2
   fi
-  if [ -n "$stopped" ]; then systemctl start starindex || true; fi
 }
-trap rollback ERR
+trap cleanup_failed ERR
 
-if [ "$target" = "$live_db" ]; then
-  echo "== stopping the app (live database)"
-  systemctl stop starindex || true
-  stopped=1
+if [ "$mode" = fill-empty-live ]; then
+  echo "== fill the empty live database $live_db"
+else
+  echo "== create $target next to $live_db ($mode)"
+  drop_target   # rehearsal copy, or nothing (a new name does not exist)
+  ( load_admin_env && psql -v ON_ERROR_STOP=1 -q -v dbname="$target" < "$here/create-db.sql" )
 fi
-echo "== keep the current $target as $prev"
-as_postgres dropdb --if-exists --force "$prev"
-if db_exists "$target"; then
-  as_postgres psql -qc "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '$target' AND pid <> pg_backend_pid()" >/dev/null
-  as_postgres psql -v ON_ERROR_STOP=1 -qc "ALTER DATABASE \"$target\" RENAME TO \"$prev\""
-fi
-echo "== create $target and pg_restore"
-psql_postgres_file "$here/create-db.sql" -v dbname="$target"
-pg_restore --no-owner --no-privileges --exit-on-error -d "$target" "$work/r.dump"
+echo "== pg_restore as the app role"
+load_db_env
+pg_restore --no-owner --no-privileges --no-tablespaces --exit-on-error --single-transaction -d "$target" "$work/r.dump"
 
-echo "== checks (DB-PLAN 5.6)"
+echo "== checks"
 psql -d "$target" -v ON_ERROR_STOP=1 -tA \
   -c "SELECT 'flyway latest ' || max(version::int) FROM flyway_schema_history WHERE version IS NOT NULL" \
   -c "SELECT 'region rows ' || count(*) FROM region" \
   -c "SELECT 'batch executions ' || count(*) FROM batch_job_execution" \
   -c "SELECT 'data_pack rows ' || count(*) || ', pinned ' || count(*) FILTER (WHERE pinned) FROM data_pack"
 trap - ERR
-if [ -n "$stopped" ]; then
-  echo "== starting the app"
-  systemctl start starindex
+
+if [ "$mode" = fill-empty-live ]; then
+  echo "restored into the live database $live_db (it was empty). Start or restart the app: sudo systemctl restart starindex"
+  exit 0
 fi
-echo "restored into $target. The previous database is kept as $prev (drop it later: sudo -u postgres dropdb $prev)."
-echo "Also check: manifest versions exist in data_pack; publish of the same nightDate gives the same version."
+if [ -z "$switch" ]; then
+  echo "restored into $target. The app still uses $live_db. To use $target: rerun with a new name and --switch (root)."
+  exit 0
+fi
+echo "== switch the app to $target"
+systemctl stop starindex || true
+backup="$APP_ENV.bak-$(date -u +%Y%m%dT%H%M%SZ)"
+cp -p "$APP_ENV" "$backup"
+new_url="$(sed -n 's/^DB_URL=//p' "$APP_ENV" | tail -1 | sed -E "s#^(jdbc:postgresql://[^/]+/)[a-z0-9_]+#\1$target#")"
+awk -v url="$new_url" '/^DB_URL=/ { print "DB_URL=" url; next } { print }' "$backup" > "$APP_ENV.new"
+chown --reference="$backup" "$APP_ENV.new" && chmod --reference="$backup" "$APP_ENV.new"
+mv "$APP_ENV.new" "$APP_ENV"
+systemctl start starindex
+echo "the app now uses $target. $live_db is kept; to go back: sudo cp -p $backup $APP_ENV && sudo systemctl restart starindex"

@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Verifies deploy/ on Amazon Linux 2023 in a container (DB-PLAN 5.8): install.sh twice (idempotent), Flyway as the
-# non-superuser owner over scram, start.sh with/without the SSM key, backup.sh → restore.sh → the same pack version,
-# pin.sh, and create-db.sql + cutover restore as an RDS-like non-superuser master. systemctl and aws are local
-# stand-ins: nothing reaches AWS. Needs Docker (arm64 image; Apple Silicon or Graviton).
+# Verifies deploy/ on Amazon Linux 2023 in a container against a Neon stand-in (ADR-015, DB-PLAN 11): a TLS-only
+# PostgreSQL 18 with a non-superuser admin (neondb_owner). Covers install.sh twice, bootstrap-db.sh, Flyway as the
+# owner role over TLS + channel binding, start.sh with/without the SSM key, the pool draining to 0 connections,
+# backup.sh → restore.sh next to the live database → the same pack version, --switch, pin.sh and failure paths.
+# systemctl and aws are local stand-ins: nothing reaches AWS or Neon. Needs Docker (arm64; Apple Silicon or Graviton).
 #   scripts/deploy-check.sh
 set -euo pipefail
 here="$(cd "$(dirname "$0")/.." && pwd)"
